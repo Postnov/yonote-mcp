@@ -11,6 +11,58 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentChatId = null;
     let isProcessing = false;
 
+    // Storage constants
+    const STORAGE_KEY = 'yonote_chat_history';
+    const STORAGE_VERSION = 1;
+
+    // Check if localStorage is available
+    function isLocalStorageAvailable() {
+        try {
+            const testKey = '__storage_test__';
+            window.localStorage.setItem(testKey, testKey);
+            window.localStorage.removeItem(testKey);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // Save chats to localStorage
+    function saveChats() {
+        if (!isLocalStorageAvailable()) return;
+        try {
+            const data = {
+                version: STORAGE_VERSION,
+                chats: chatHistory
+            };
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        } catch (e) {
+            // Storage quota exceeded or other error - fail silently
+        }
+    }
+
+    // Load chats from localStorage
+    function loadChats() {
+        if (!isLocalStorageAvailable()) return [];
+        try {
+            const raw = window.localStorage.getItem(STORAGE_KEY);
+            if (!raw) return [];
+            const data = JSON.parse(raw);
+            // Version check - if version mismatch, return empty (migrations can be added later)
+            if (!data.version || data.version !== STORAGE_VERSION) {
+                return [];
+            }
+            return Array.isArray(data.chats) ? data.chats : [];
+        } catch (e) {
+            // Parse error or other issue - return empty array
+            return [];
+        }
+    }
+
+    // Initialize chat history from localStorage
+    chatHistory = loadChats();
+    renderChatList();
+
     // Auto-resize textarea
     chatInput.addEventListener('input', () => {
         chatInput.style.height = 'auto';
@@ -68,6 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const label = firstMessage.length > 30 ? firstMessage.substring(0, 30) + '...' : firstMessage;
             chatHistory.push({ id: currentChatId, label, messages: [] });
             renderChatList();
+            saveChats();
         }
     }
 
@@ -92,14 +145,279 @@ document.addEventListener('DOMContentLoaded', () => {
             const item = document.createElement('div');
             item.className = 'chat-list-item' + (chat.id === currentChatId ? ' active' : '');
             item.innerHTML = `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="chat-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
-                ${escapeHtml(chat.label)}
+                <span class="chat-label">${escapeHtml(chat.label)}</span>
+                <div class="chat-item-actions">
+                    <button class="chat-edit-btn" title="Переименовать">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    </button>
+                    <button class="chat-delete-btn" title="Удалить">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            <line x1="10" y1="11" x2="10" y2="17"/>
+                            <line x1="14" y1="11" x2="14" y2="17"/>
+                        </svg>
+                    </button>
+                </div>
             `;
-            item.addEventListener('click', () => loadChat(chat.id));
+
+            // Click on item loads the chat
+            item.addEventListener('click', (e) => {
+                // Don't load chat if clicking on edit or delete button
+                if (e.target.closest('.chat-edit-btn') || e.target.closest('.chat-delete-btn')) return;
+                loadChat(chat.id);
+            });
+
+            // Edit button click handler
+            const editBtn = item.querySelector('.chat-edit-btn');
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                startRenameChat(chat.id);
+            });
+
+            // Delete button click handler
+            const deleteBtn = item.querySelector('.chat-delete-btn');
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showDeleteConfirm(chat.id);
+            });
+
             chatList.appendChild(item);
         });
+    }
+
+    function startRenameChat(chatId) {
+        const chat = chatHistory.find(c => c.id === chatId);
+        if (!chat) return;
+
+        // Find the chat list item
+        const chatItems = chatList.querySelectorAll('.chat-list-item');
+        let targetItem = null;
+        chatItems.forEach(item => {
+            const labelSpan = item.querySelector('.chat-label');
+            if (labelSpan && labelSpan.textContent === chat.label) {
+                targetItem = item;
+            }
+        });
+        if (!targetItem) return;
+
+        // Check if already in rename mode
+        if (targetItem.querySelector('.chat-rename-input')) return;
+
+        const labelSpan = targetItem.querySelector('.chat-label');
+        if (!labelSpan) return;
+
+        // Get the current label text and dimensions
+        const currentLabel = chat.label;
+        const labelRect = labelSpan.getBoundingClientRect();
+
+        // Create inline input
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'chat-rename-input';
+        input.value = currentLabel;
+        input.style.width = (labelRect.width + 10) + 'px';
+        input.dataset.chatId = chatId;
+        input.dataset.originalLabel = currentLabel;
+
+        // Replace label with input
+        labelSpan.style.display = 'none';
+        labelSpan.parentNode.insertBefore(input, labelSpan.nextSibling);
+
+        // Handle Enter key to finish rename
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                finishRename(chatId, input.value);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelRename();
+            }
+        });
+
+        // Handle blur (clicking outside) to finish rename
+        input.addEventListener('blur', () => {
+            // Small delay to allow for other events to process
+            setTimeout(() => {
+                if (document.body.contains(input)) {
+                    finishRename(chatId, input.value);
+                }
+            }, 100);
+        });
+
+        // Focus and select all text
+        input.focus();
+        input.select();
+    }
+
+    function finishRename(chatId, newLabel) {
+        // Validate: no empty strings
+        const trimmedLabel = newLabel.trim();
+        if (!trimmedLabel) {
+            // Empty string - cancel the rename instead
+            cancelRename();
+            return;
+        }
+
+        // Find the chat and update its label
+        const chat = chatHistory.find(c => c.id === chatId);
+        if (!chat) {
+            cancelRename();
+            return;
+        }
+
+        // Update the label
+        chat.label = trimmedLabel;
+
+        // Save to localStorage
+        saveChats();
+
+        // Re-render the chat list to show updated label
+        renderChatList();
+    }
+
+    function cancelRename() {
+        // Find all rename inputs and restore original labels
+        const inputs = chatList.querySelectorAll('.chat-rename-input');
+        inputs.forEach(input => {
+            const labelSpan = input.previousElementSibling;
+            if (labelSpan && labelSpan.classList.contains('chat-label')) {
+                // Restore the label visibility
+                labelSpan.style.display = '';
+            }
+            // Remove the input
+            input.remove();
+        });
+    }
+
+    function showDeleteConfirm(chatId) {
+        const chat = chatHistory.find(c => c.id === chatId);
+        if (!chat) return;
+
+        // Find the chat list item by data attribute
+        const chatItems = chatList.querySelectorAll('.chat-list-item');
+        let targetItem = null;
+        chatItems.forEach(item => {
+            const labelSpan = item.querySelector('.chat-label');
+            if (labelSpan && labelSpan.textContent === chat.label) {
+                targetItem = item;
+            }
+        });
+        if (!targetItem) return;
+
+        // Check if already in delete confirm mode
+        if (targetItem.querySelector('.chat-delete-confirm')) return;
+
+        // Store original content
+        const originalContent = targetItem.innerHTML;
+
+        // Replace content with confirmation UI
+        targetItem.innerHTML = `
+            <div class="chat-delete-confirm" data-chat-id="${chatId}">
+                <span class="delete-confirm-text">Удалить?</span>
+                <div class="delete-confirm-actions">
+                    <button class="delete-confirm-btn delete-confirm-yes" title="Удалить">Удалить</button>
+                    <button class="delete-confirm-btn delete-confirm-no" title="Отмена">Отмена</button>
+                </div>
+            </div>
+        `;
+
+        // Store original content for restoration
+        targetItem.dataset.originalContent = originalContent;
+
+        // Handle Удалить button
+        const yesBtn = targetItem.querySelector('.delete-confirm-yes');
+        yesBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteChat(chatId);
+        });
+
+        // Handle Отмена button
+        const noBtn = targetItem.querySelector('.delete-confirm-no');
+        noBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            cancelDeleteConfirm(chatId);
+        });
+    }
+
+    function cancelDeleteConfirm(chatId) {
+        // Find the chat item with delete confirmation
+        const confirmEl = chatList.querySelector(`.chat-delete-confirm[data-chat-id="${chatId}"]`);
+        if (!confirmEl) return;
+
+        const chatItem = confirmEl.closest('.chat-list-item');
+        if (!chatItem) return;
+
+        // Restore original content
+        const originalContent = chatItem.dataset.originalContent;
+        if (originalContent) {
+            chatItem.innerHTML = originalContent;
+            delete chatItem.dataset.originalContent;
+
+            // Re-attach event listeners
+            const chat = chatHistory.find(c => c.id === chatId);
+            if (chat) {
+                // Click on item loads the chat
+                chatItem.addEventListener('click', (e) => {
+                    if (e.target.closest('.chat-edit-btn') || e.target.closest('.chat-delete-btn')) return;
+                    loadChat(chatId);
+                });
+
+                // Edit button click handler
+                const editBtn = chatItem.querySelector('.chat-edit-btn');
+                if (editBtn) {
+                    editBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        startRenameChat(chatId);
+                    });
+                }
+
+                // Delete button click handler
+                const deleteBtn = chatItem.querySelector('.chat-delete-btn');
+                if (deleteBtn) {
+                    deleteBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        showDeleteConfirm(chatId);
+                    });
+                }
+            }
+        }
+    }
+
+    function deleteChat(chatId) {
+        // Find the index of the chat to delete
+        const chatIndex = chatHistory.findIndex(c => c.id === chatId);
+        if (chatIndex === -1) return;
+
+        // Remove from chat history array
+        chatHistory.splice(chatIndex, 1);
+
+        // Save updated chat history to localStorage
+        saveChats();
+
+        // If deleted chat was active, switch to welcome screen
+        if (currentChatId === chatId) {
+            currentChatId = null;
+            chatMessages.innerHTML = '';
+            if (welcomeScreen) {
+                chatMessages.appendChild(welcomeScreen);
+                welcomeScreen.style.display = '';
+            }
+            chatInput.value = '';
+            chatInput.focus();
+
+            // Reset AI conversation
+            fetch('/api/reset', { method: 'POST' }).catch(() => {});
+        }
+
+        // Re-render the chat list
+        renderChatList();
     }
 
     function loadChat(chatId) {
@@ -140,7 +458,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (save) {
             const chat = chatHistory.find(c => c.id === currentChatId);
-            if (chat) chat.messages.push({ type: 'user', text });
+            if (chat) {
+                chat.messages.push({ type: 'user', text });
+                saveChats();
+            }
         }
     }
 
@@ -548,6 +869,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const msgEl = container.closest('.message');
             if (msgEl) {
                 chat.messages.push({ type: 'assistant', html: msgEl.outerHTML });
+                saveChats();
             }
         }
     }

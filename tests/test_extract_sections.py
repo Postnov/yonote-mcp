@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import extract_section_from_text, sse_event
+from app import extract_section_from_text, sse_event, resolve_attachment_refs
 
 
 # --- Real Yonote-style text samples ---
@@ -149,6 +149,219 @@ class TestExtractSectionFromText:
         # Section between "Свет" and "Цвет" is just an empty line
         assert result is None
 
+    def test_image_preserved_in_section(self):
+        """Images inside a section should NOT be detected as headings."""
+        text = """Свет
+
+Основное освещение — встроенные споты.
+
+![Фото освещения](<attachment:abc123>)
+
+Дополнительно — бра у кровати.
+
+Цвет
+
+Бежевый"""
+        result = extract_section_from_text(text, "Свет")
+        assert result is not None
+        assert "встроенные споты" in result
+        assert "![Фото освещения](<attachment:abc123>)" in result
+        assert "бра у кровати" in result
+        # Should NOT bleed into next section
+        assert "Бежевый" not in result
+
+    def test_multiple_images_preserved(self):
+        """Multiple images in a section should all be preserved."""
+        text = """Свет
+
+Люстра в центре комнаты, бра у кровати.
+
+![Люстра](<attachment:img1>)
+
+![Бра](<attachment:img2>)
+
+Цвет
+
+Белый"""
+        result = extract_section_from_text(text, "Свет")
+        assert "![Люстра](<attachment:img1>)" in result
+        assert "![Бра](<attachment:img2>)" in result
+        assert "Люстра в центре" in result
+        assert "Белый" not in result
+
+    def test_link_not_detected_as_heading(self):
+        """Standalone links should not be treated as headings."""
+        text = """Свет
+
+Подробнее тут:
+
+[Каталог светильников](https://example.com/lights)
+
+Ещё варианты.
+
+Цвет
+
+Белый"""
+        result = extract_section_from_text(text, "Свет")
+        assert "[Каталог светильников](https://example.com/lights)" in result
+        assert "Ещё варианты" in result
+        assert "Белый" not in result
+
+    def test_blockquote_not_detected_as_heading(self):
+        """Blockquotes should not be treated as headings."""
+        text = """Свет
+
+> Важно: диммируемый
+
+Всё остальное тоже.
+
+Цвет
+
+Белый"""
+        result = extract_section_from_text(text, "Свет")
+        assert "> Важно: диммируемый" in result
+        assert "Всё остальное тоже" in result
+        assert "Белый" not in result
+
+    def test_bold_markdown_heading_matched(self):
+        """## **Свет** should match search for 'Свет'."""
+        text = """## **Свет**
+
+Диммеры и споты.
+
+## Цвет
+
+Белый"""
+        result = extract_section_from_text(text, "Свет")
+        assert result is not None
+        assert "Диммеры и споты" in result
+        assert "Белый" not in result
+
+    def test_italic_markdown_heading_matched(self):
+        """## *Свет* should match search for 'Свет'."""
+        text = """## *Свет*
+
+Люстра.
+
+## Цвет
+
+Серый"""
+        result = extract_section_from_text(text, "Свет")
+        assert result is not None
+        assert "Люстра" in result
+
+    def test_bold_plain_text_heading_matched(self):
+        """**Свет** as plain text heading should match 'Свет'."""
+        text = """**Свет**
+
+Диммеры и споты.
+
+Цвет
+
+Белый"""
+        result = extract_section_from_text(text, "Свет")
+        assert result is not None
+        assert "Диммеры" in result
+
+    def test_table_not_detected_as_heading(self):
+        """Table rows should not be treated as headings."""
+        text = """Свет
+
+Настройки:
+
+| Режим | Яркость |
+|-------|---------|
+| День  | 100%    |
+
+Дополнительно.
+
+Цвет
+
+Белый"""
+        result = extract_section_from_text(text, "Свет")
+        assert "| Режим | Яркость |" in result
+        assert "Дополнительно" in result
+        assert "Белый" not in result
+
+    def test_section_with_only_image(self):
+        """Section containing only an image should still be extracted."""
+        text = """## Свет
+
+![Освещение](<attachment:light123>)
+
+## Цвет
+
+Белый"""
+        result = extract_section_from_text(text, "Свет")
+        assert result is not None
+        assert "![Освещение](<attachment:light123>)" in result
+
+    def test_section_image_then_text(self):
+        """Section with image followed by text should extract both."""
+        text = """## Свет
+
+![screenshot](/api/attachments.redirect?id=abc)
+
+- Светло
+- Мягко
+- Скрыта неидеальность
+
+## Тишина
+
+Тихо"""
+        result = extract_section_from_text(text, "Свет")
+        assert result is not None
+        assert "![screenshot](/api/attachments.redirect?id=abc)" in result
+        assert "- Светло" in result
+        assert "- Мягко" in result
+        assert "Тихо" not in result
+
+    def test_format_b_no_empty_lines_around_heading(self):
+        """Format B: plain text headings with NO empty lines around them.
+
+        Real Yonote API returns text like:
+          Геометрия
+          Стык через металл профиль
+          Никаких треков...
+          Свет
+          Светло
+          Мягко
+
+          Цвет
+          Бежевые...
+        """
+        text = ("Геометрия\nСтык через металл профиль\n"
+                "Никаких треков, светильники утоплены в цвет потолка, умеренно тёплый свет одного тона\n"
+                "Свет\nСветло\nМягко\nСкрыта неидеальность\nПрибавляет аппетитности \n\n"
+                "Цвет\nБежевые, пастельные, тёплые оттенки\nМожет быть контраст небольшим акцентом\n\n"
+                "Текстура\nДерево\n")
+        result = extract_section_from_text(text, "Свет")
+        assert result is not None
+        assert "Светло" in result
+        assert "Мягко" in result
+        assert "Скрыта неидеальность" in result
+        assert "Прибавляет аппетитности" in result
+        assert "Бежевые" not in result
+        assert "Дерево" not in result
+
+    def test_format_b_search_second_section(self):
+        """Format B: searching for second section after empty line."""
+        text = ("Свет\nСветло\nМягко\n\n"
+                "Цвет\nБежевые оттенки\nТёплые тона\n\n"
+                "Текстура\nДерево\n")
+        result = extract_section_from_text(text, "Цвет")
+        assert result is not None
+        assert "Бежевые оттенки" in result
+        assert "Тёплые тона" in result
+        assert "Дерево" not in result
+
+    def test_format_b_last_section(self):
+        """Format B: last section in document (no following heading)."""
+        text = "Свет\nСветло\nМягко\n\nЦвет\nБежевые оттенки\n"
+        result = extract_section_from_text(text, "Цвет")
+        assert result is not None
+        assert "Бежевые оттенки" in result
+
     def test_multiple_rooms_realistic(self):
         """Simulate extracting 'Свет' from multiple room documents."""
         rooms = {
@@ -290,6 +503,75 @@ class TestExtractSectionsStreaming:
         assert "не найдена" in result_items[0]["_result"]["message"]
 
     @patch("app.yonote")
+    def test_reports_skipped_and_error_pages(self, mock_yonote):
+        """Should show which pages had errors and which had no section."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "ok", "title": "ОК"},
+                {"id": "skip", "title": "Пропущена"},
+                {"id": "err", "title": "Ошибка"},
+            ]},
+            {"data": []}, {"data": []}, {"data": []},
+        ]
+        mock_yonote.document_info.side_effect = [
+            {"data": {"id": "ok", "title": "ОК", "text": "Свет\n\nСветло\nМягко\n\nЦвет\n\nБелый"}},
+            {"data": {"id": "skip", "title": "Пропущена", "text": "Мебель\n\nСтолы"}},
+            Exception("API timeout"),
+        ]
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/r"
+
+        from app import execute_extract_sections_streaming
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "parent-1",
+            "heading": "Свет",
+        }))
+
+        sse_events = [e for e in events if isinstance(e, str)]
+        sse_text = " ".join(sse_events)
+
+        # Should report the error and skipped pages
+        assert "Ошибка" in sse_text
+        assert "Пропущена" in sse_text
+        # But still create report from the OK page
+        mock_yonote.document_create.assert_called_once()
+
+    @patch("app.yonote")
+    def test_empty_text_pages_reported_separately(self, mock_yonote):
+        """Pages with null/empty text should be reported as 'empty text', not 'section not found'."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "ok", "title": "Гости"},
+                {"id": "empty", "title": "С картинкой"},  # block-based, text is null
+            ]},
+            {"data": []}, {"data": []},
+        ]
+        mock_yonote.document_info.side_effect = [
+            {"data": {"id": "ok", "title": "Гости", "text": "Свет\n\nСветло\nМягко\n\nЦвет\n\nБелый"}},
+            {"data": {"id": "empty", "title": "С картинкой", "text": None}},  # null text
+        ]
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/r"
+
+        from app import execute_extract_sections_streaming
+
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "parent-1",
+            "heading": "Свет",
+        }))
+
+        sse_events = [e for e in events if isinstance(e, str)]
+        sse_text = " ".join(sse_events)
+
+        # Should specifically mention "пустой текст" for the block-based page
+        assert "С картинкой" in sse_text
+        assert "пустой" in sse_text.lower() or "блочный" in sse_text.lower()
+        # Should still create report from the non-empty page
+        mock_yonote.document_create.assert_called_once()
+
+    @patch("app.yonote")
     def test_emits_progress_status_events(self, mock_yonote):
         # documents_list: parent -> 2 children (leaves)
         mock_yonote.documents_list.side_effect = [
@@ -321,6 +603,42 @@ class TestExtractSectionsStreaming:
         assert "Спальня" in sse_text
         assert "Найдено" in sse_text
         assert "Создаю страницу" in sse_text
+
+    @patch("app.yonote")
+    def test_images_preserved_in_report(self, mock_yonote):
+        """Images inside sections should survive the full extract+compile pipeline."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [{"id": "child-1", "title": "Гости"}]},
+            {"data": []},
+        ]
+        mock_yonote.document_info.return_value = {
+            "data": {
+                "id": "child-1", "title": "Гости",
+                "text": "Свет\n\nОсновное освещение — споты.\n\n![Фото](<attachment:abc123>)\n\nДополнительно — бра.\n\nЦвет\n\nБежевый",
+            }
+        }
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/r"
+        mock_yonote.get_attachment_url.side_effect = (
+            lambda uuid: f"https://app.yonote.ru/api/attachments.redirect?id={uuid}"
+        )
+
+        from app import execute_extract_sections_streaming
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "parent-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        # Image should be in the report with redirect URL (attachment ref resolved)
+        assert "![Фото](https://app.yonote.ru/api/attachments.redirect?id=abc123)" in created_text
+        assert "<attachment:abc123>" not in created_text
+        assert "споты" in created_text
+        assert "бра" in created_text
+        # Content from next section should NOT leak in
+        assert "Бежевый" not in created_text
 
     @patch("app.yonote")
     def test_recursive_deep_nesting(self, mock_yonote):
@@ -519,3 +837,782 @@ class TestFetchAllDescendants:
         assert len(result) == 2  # Both are collected, but c2's children are skipped
         assert result[0]["id"] == "c1"
         assert result[1]["id"] == "c2"
+
+    @patch("app.yonote")
+    def test_paths_without_root_title(self, mock_yonote):
+        """Without root_title, paths start from first child."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [{"id": "c1", "title": "Интерьер"}]},
+            {"data": [{"id": "c2", "title": "Гости"}]},
+            {"data": []},
+        ]
+
+        from app import fetch_all_descendants
+        result = fetch_all_descendants("root")
+        assert result[0]["path"] == ["Интерьер"]
+        assert result[1]["path"] == ["Интерьер", "Гости"]
+
+    @patch("app.yonote")
+    def test_paths_with_root_title(self, mock_yonote):
+        """With root_title, paths include the root."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [{"id": "c1", "title": "Интерьер"}]},
+            {"data": [{"id": "c2", "title": "Гости"}]},
+            {"data": []},
+        ]
+
+        from app import fetch_all_descendants
+        result = fetch_all_descendants("root", root_title="Авгодом")
+        assert result[0]["path"] == ["Авгодом", "Интерьер"]
+        assert result[1]["path"] == ["Авгодом", "Интерьер", "Гости"]
+
+
+class TestBreadcrumbs:
+    """Tests for breadcrumbs in extract_sections reports."""
+
+    @patch("app.yonote")
+    def test_no_breadcrumbs_by_default(self, mock_yonote):
+        """Without breadcrumbs param, no path is added to report."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [{"id": "c1", "title": "Гости"}]},
+            {"data": []},
+        ]
+        mock_yonote.document_info.return_value = {
+            "data": {"id": "c1", "title": "Гости", "text": "Свет\n\nСветло\nМягко\n\nЦвет\n\nБелый"}
+        }
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/r"
+
+        from app import execute_extract_sections_streaming
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "parent-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "→" not in created_text  # No breadcrumb arrows
+
+    @patch("app.yonote")
+    def test_breadcrumbs_added_when_enabled(self, mock_yonote):
+        """With breadcrumbs=True, path is added under each heading."""
+        # document_info calls: 1 for root title + 2 for children
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "interior", "title": "Интерьер"},
+            ]},
+            {"data": [{"id": "guests", "title": "1 этаж, Гости"}]},
+            {"data": []},
+        ]
+        mock_yonote.document_info.side_effect = [
+            # Root title fetch
+            {"data": {"id": "avgdom", "title": "Авгодом"}},
+            # Reading "Интерьер" — no "Свет"
+            {"data": {"id": "interior", "title": "Интерьер", "text": "Описание\n\nТекст"}},
+            # Reading "1 этаж, Гости" — HAS "Свет"
+            {"data": {"id": "guests", "title": "1 этаж, Гости", "text": "Свет\n\nСветло\nМягко\n\nЦвет\n\nБелый"}},
+        ]
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/r"
+
+        from app import execute_extract_sections_streaming
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "avgdom",
+            "heading": "Свет",
+            "breadcrumbs": True,
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "## 1 этаж, Гости" in created_text
+        assert "*Авгодом → Интерьер → 1 этаж, Гости*" in created_text
+        assert "Светло" in created_text
+
+    @patch("app.yonote")
+    def test_breadcrumbs_multiple_sections(self, mock_yonote):
+        """Each section gets its own breadcrumb path."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "branch-a", "title": "Крыло А"},
+                {"id": "branch-b", "title": "Крыло Б"},
+            ]},
+            {"data": [{"id": "room-a1", "title": "Комната 101"}]},
+            {"data": [{"id": "room-b1", "title": "Комната 201"}]},
+            {"data": []},
+            {"data": []},
+        ]
+        mock_yonote.document_info.side_effect = [
+            # Root title
+            {"data": {"id": "root", "title": "Здание"}},
+            # Reading pages
+            {"data": {"id": "branch-a", "title": "Крыло А", "text": "Описание\n\nТекст"}},
+            {"data": {"id": "branch-b", "title": "Крыло Б", "text": "Описание\n\nТекст"}},
+            {"data": {"id": "room-a1", "title": "Комната 101", "text": "Свет\n\nЛюстра\nБра\n\nЦвет\n\nБелый"}},
+            {"data": {"id": "room-b1", "title": "Комната 201", "text": "Свет\n\nСпоты\nДиммер\n\nЦвет\n\nСерый"}},
+        ]
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/r"
+
+        from app import execute_extract_sections_streaming
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "root",
+            "heading": "Свет",
+            "breadcrumbs": True,
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "*Здание → Крыло А → Комната 101*" in created_text
+
+
+class TestCopySectionStreaming:
+    """Tests for execute_copy_section_streaming() generator."""
+
+    @patch("app.yonote")
+    def test_extracts_section_and_creates_document(self, mock_yonote):
+        """Should extract a section from a document and create a new page."""
+        mock_yonote.document_info.return_value = {
+            "data": {
+                "id": "doc-1", "title": "Гости",
+                "text": "Геометрия\n\nОткрытая планировка\n\nСвет\n\nСветло\nМягко\nТёплый тон\n\nЦвет\n\nБежевый",
+                "url": "/doc/guests",
+            }
+        }
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/doc/guests"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {
+            "id": "new-1", "title": "Свет — Гости", "url": "/doc/new-1",
+        }}
+
+        from app import execute_copy_section_streaming
+
+        events = list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+            "output_title": "Свет — Гости",
+        }))
+
+        # Check document was created with section content
+        mock_yonote.document_create.assert_called_once()
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "Светло" in created_text
+        assert "Мягко" in created_text
+        assert "Тёплый тон" in created_text
+        # Should NOT include other sections
+        assert "Бежевый" not in created_text
+        assert "Открытая планировка" not in created_text
+        # Should have source reference
+        assert "Источник" in created_text
+        assert "Гости" in created_text
+
+        # Check final result
+        result_items = [e for e in events if isinstance(e, dict)]
+        assert len(result_items) == 1
+        result = result_items[0]["_result"]
+        assert result["document"]["id"] == "new-1"
+        assert result["heading"] == "Свет"
+
+    @patch("app.yonote")
+    def test_section_not_found(self, mock_yonote):
+        """Should return message when section heading doesn't exist."""
+        mock_yonote.document_info.return_value = {
+            "data": {
+                "id": "doc-1", "title": "Гости",
+                "text": "Мебель\n\nСтолы и стулья",
+                "url": "/doc/guests",
+            }
+        }
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/doc/guests"
+
+        from app import execute_copy_section_streaming
+
+        events = list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+        }))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        assert len(result_items) == 1
+        assert "не найдена" in result_items[0]["_result"]["message"]
+        mock_yonote.document_create.assert_not_called()
+
+    @patch("app.yonote")
+    def test_empty_text_suggests_duplicate(self, mock_yonote):
+        """When document has no text, should suggest duplicate_document."""
+        mock_yonote.document_info.return_value = {
+            "data": {
+                "id": "doc-1", "title": "С картинкой",
+                "text": None,
+                "url": "/doc/img",
+            }
+        }
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/doc/img"
+
+        from app import execute_copy_section_streaming
+
+        events = list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+        }))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        assert len(result_items) == 1
+        msg = result_items[0]["_result"]["message"]
+        assert "duplicate_document" in msg
+        mock_yonote.document_create.assert_not_called()
+
+    @patch("app.yonote")
+    def test_images_preserved_in_copy(self, mock_yonote):
+        """Images in extracted section should be preserved with resolved URLs."""
+        mock_yonote.document_info.return_value = {
+            "data": {
+                "id": "doc-1", "title": "Гости",
+                "text": "Свет\n\nОсновное освещение.\n\n![Фото](<attachment:abc123>)\n\nДополнительно — бра.\n\nЦвет\n\nБежевый",
+                "url": "/doc/guests",
+            }
+        }
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/doc/guests"
+        mock_yonote.get_attachment_url.side_effect = (
+            lambda uuid: f"https://app.yonote.ru/api/attachments.redirect?id={uuid}"
+        )
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {
+            "id": "new-1", "title": "Свет", "url": "/doc/new-1",
+        }}
+
+        from app import execute_copy_section_streaming
+
+        events = list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "![Фото](https://app.yonote.ru/api/attachments.redirect?id=abc123)" in created_text
+        assert "бра" in created_text
+        assert "Бежевый" not in created_text
+
+    @patch("app.yonote")
+    def test_emits_progress_events(self, mock_yonote):
+        """Should emit SSE status events during execution."""
+        mock_yonote.document_info.return_value = {
+            "data": {
+                "id": "doc-1", "title": "Гости",
+                "text": "## Свет\n\n- Светло\n- Мягко\n- Скрыта неидеальность\n\n## Цвет\n\nБежевые оттенки.",
+                "url": "/doc/guests",
+            }
+        }
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+
+        from app import execute_copy_section_streaming
+
+        events = list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+            "output_title": "Копия Свет",
+        }))
+
+        sse_events = [e for e in events if isinstance(e, str)]
+        sse_text = " ".join(sse_events)
+        assert "Загружаю документ" in sse_text
+        assert "Ищу секцию" in sse_text
+        assert "Создаю страницу" in sse_text
+
+    @patch("app.yonote")
+    def test_parent_document_id_passed(self, mock_yonote):
+        """When parent_document_id is provided, it should be passed to document_create."""
+        mock_yonote.document_info.return_value = {
+            "data": {
+                "id": "doc-1", "title": "Гости",
+                "text": "## Свет\n\n- Светло\n- Мягко\n- Скрыта неидеальность\n\n## Цвет\n\nБежевые оттенки.",
+                "url": "/doc/guests",
+            }
+        }
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+
+        from app import execute_copy_section_streaming
+
+        list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+            "parent_document_id": "parent-123",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        # Check parent_document_id was passed
+        all_kwargs = call_kwargs.kwargs if call_kwargs.kwargs else {}
+        assert all_kwargs.get("parent_document_id") == "parent-123"
+
+
+class TestFetchDocumentImages:
+    """Tests for fetch_document_images() helper."""
+
+    @patch("app.yonote")
+    def test_returns_images_as_markdown(self, mock_yonote):
+        mock_yonote.attachments_list.return_value = {"data": [
+            {
+                "id": "att-1",
+                "name": "photo.png",
+                "contentType": "image/png",
+                "size": 245252,
+                "redirectUrl": "/api/attachments.redirect?id=att-1",
+            },
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1")
+
+        assert len(images) == 1
+        assert "![photo.png](https://x.yonote.ru/api/attachments.redirect?id=att-1)" == images[0]
+
+    @patch("app.yonote")
+    def test_returns_empty_when_no_attachments(self, mock_yonote):
+        mock_yonote.attachments_list.return_value = {"data": []}
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1")
+        assert images == []
+
+    @patch("app.yonote")
+    def test_filters_non_image_attachments(self, mock_yonote):
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "1", "name": "doc.pdf", "contentType": "application/pdf", "redirectUrl": "/r?id=1"},
+            {"id": "2", "name": "pic.jpg", "contentType": "image/jpeg", "redirectUrl": "/r?id=2"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1")
+
+        assert len(images) == 1
+        assert "pic.jpg" in images[0]
+        assert "doc.pdf" not in str(images)
+
+    @patch("app.yonote")
+    def test_returns_empty_on_api_error(self, mock_yonote):
+        mock_yonote.attachments_list.side_effect = Exception("API error")
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1")
+        assert images == []
+
+    @patch("app.yonote")
+    def test_multiple_images(self, mock_yonote):
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "1", "name": "a.png", "contentType": "image/png", "redirectUrl": "/r?id=1"},
+            {"id": "2", "name": "b.jpg", "contentType": "image/jpeg", "redirectUrl": "/r?id=2"},
+            {"id": "3", "name": "c.gif", "contentType": "image/gif", "redirectUrl": "/r?id=3"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1")
+        assert len(images) == 3
+
+
+class TestMatchImageToHeading:
+    """Tests for _match_image_to_heading() tag parsing."""
+
+    def test_hash_tag_match(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("#свет - фото освещения.png", "Свет") == "match"
+
+    def test_hash_tag_match_dash(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("#свет фото.png", "Свет") == "match"
+
+    def test_plain_tag_match(self):
+        """Tag without # should also work."""
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("свет - фото освещения.png", "Свет") == "match"
+
+    def test_plain_tag_space(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("свет фото.png", "Свет") == "match"
+
+    def test_tag_mismatch(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("#цвет - палитра.png", "Свет") == "mismatch"
+
+    def test_plain_tag_mismatch(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("цвет - палитра.png", "Свет") == "mismatch"
+
+    def test_untagged_image(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("image.png", "Свет") == "untagged"
+
+    def test_no_heading(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("#свет - фото.png", None) == "untagged"
+
+    def test_empty_name(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("", "Свет") == "untagged"
+
+    def test_partial_word_not_matched(self):
+        """'рассвет.png' should NOT match heading 'Свет' (part of word)."""
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("рассвет.png", "Свет") != "match"
+
+    def test_case_insensitive(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("#СВЕТ - фото.png", "свет") == "match"
+        assert _match_image_to_heading("#Свет - фото.png", "СВЕТ") == "match"
+
+    def test_em_dash_separator(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("#свет — фото.png", "Свет") == "match"
+
+    def test_tag_only_filename(self):
+        """Filename is just the tag + extension."""
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("#свет.png", "Свет") == "match"
+
+    def test_multi_word_heading(self):
+        from app import _match_image_to_heading
+        assert _match_image_to_heading("#принципиальные решения - схема.png", "Принципиальные решения") == "match"
+
+
+class TestFetchDocumentImagesFiltered:
+    """Tests for fetch_document_images() with heading filter."""
+
+    @patch("app.yonote")
+    def test_tagged_match_included(self, mock_yonote):
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "1", "name": "#свет - фото.png", "contentType": "image/png",
+             "redirectUrl": "/r?id=1"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1", heading="Свет")
+        assert len(images) == 1
+        assert "фото.png" in images[0]
+
+    @patch("app.yonote")
+    def test_tagged_mismatch_excluded(self, mock_yonote):
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "1", "name": "#цвет - палитра.png", "contentType": "image/png",
+             "redirectUrl": "/r?id=1"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1", heading="Свет")
+        assert len(images) == 0
+
+    @patch("app.yonote")
+    def test_untagged_always_included(self, mock_yonote):
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "1", "name": "image.png", "contentType": "image/png",
+             "redirectUrl": "/r?id=1"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1", heading="Свет")
+        assert len(images) == 1
+
+    @patch("app.yonote")
+    def test_mixed_tags_filtering(self, mock_yonote):
+        """Only matching and untagged images should be returned."""
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "1", "name": "#свет - люстра.png", "contentType": "image/png",
+             "redirectUrl": "/r?id=1"},
+            {"id": "2", "name": "#цвет - палитра.png", "contentType": "image/png",
+             "redirectUrl": "/r?id=2"},
+            {"id": "3", "name": "photo.jpg", "contentType": "image/jpeg",
+             "redirectUrl": "/r?id=3"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1", heading="Свет")
+        assert len(images) == 2  # #свет + untagged, NOT #цвет
+        combined = " ".join(images)
+        assert "люстра" in combined
+        assert "photo" in combined
+        assert "палитра" not in combined
+
+    @patch("app.yonote")
+    def test_no_heading_returns_all(self, mock_yonote):
+        """Without heading filter, all images should be returned."""
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "1", "name": "#свет - люстра.png", "contentType": "image/png",
+             "redirectUrl": "/r?id=1"},
+            {"id": "2", "name": "#цвет - палитра.png", "contentType": "image/png",
+             "redirectUrl": "/r?id=2"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import fetch_document_images
+        images = fetch_document_images("doc-1", heading=None)
+        assert len(images) == 2
+
+
+class TestExtractSectionsWithAttachments:
+    """Tests for extract_sections enrichment with document images."""
+
+    @patch("app.yonote")
+    def test_images_appended_to_extracted_section(self, mock_yonote):
+        """When a document has attachments, they should appear in the report."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [{"id": "child-1", "title": "Гости"}]},
+            {"data": []},
+        ]
+        mock_yonote.document_info.return_value = {
+            "data": {"id": "child-1", "title": "Гости",
+                     "text": "Свет\n\nСветло\nМягко\n\nЦвет\n\nБелый"}
+        }
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "img-1", "name": "light.png", "contentType": "image/png",
+             "redirectUrl": "/api/attachments.redirect?id=img-1"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {
+            "id": "r", "title": "t", "url": "/r",
+        }}
+
+        from app import execute_extract_sections_streaming
+
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "parent-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        # Section text should be there
+        assert "Светло" in created_text
+        assert "Мягко" in created_text
+        # Image should be appended
+        assert "![light.png](https://x.yonote.ru/api/attachments.redirect?id=img-1)" in created_text
+        # Other section should NOT be there
+        assert "Белый" not in created_text
+
+    @patch("app.yonote")
+    def test_no_images_when_no_attachments(self, mock_yonote):
+        """When document has no attachments, report should have text only."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [{"id": "child-1", "title": "Гости"}]},
+            {"data": []},
+        ]
+        mock_yonote.document_info.return_value = {
+            "data": {"id": "child-1", "title": "Гости",
+                     "text": "Свет\n\nСветло\nМягко\n\nЦвет\n\nБелый"}
+        }
+        mock_yonote.attachments_list.return_value = {"data": []}
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {
+            "id": "r", "title": "t", "url": "/r",
+        }}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/r"
+
+        from app import execute_extract_sections_streaming
+
+        list(execute_extract_sections_streaming({
+            "parent_document_id": "parent-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "![" not in created_text
+        assert "Светло" in created_text
+
+
+class TestCopySectionWithAttachments:
+    """Tests for copy_section enrichment with document images."""
+
+    @patch("app.yonote")
+    def test_images_appended_to_copied_section(self, mock_yonote):
+        mock_yonote.document_info.return_value = {
+            "data": {"id": "doc-1", "title": "Гости",
+                     "text": "## Свет\n\n- Светло\n- Мягко\n\n## Цвет\n\nБежевый",
+                     "url": "/doc/guests"}
+        }
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "img-1", "name": "lamp.jpg", "contentType": "image/jpeg",
+             "redirectUrl": "/api/attachments.redirect?id=img-1"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {
+            "id": "r", "title": "t", "url": "/r",
+        }}
+
+        from app import execute_copy_section_streaming
+
+        events = list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "Светло" in created_text
+        assert "![lamp.jpg](https://x.yonote.ru/api/attachments.redirect?id=img-1)" in created_text
+        assert "Бежевый" not in created_text
+
+    @patch("app.yonote")
+    def test_no_images_when_no_attachments(self, mock_yonote):
+        mock_yonote.document_info.return_value = {
+            "data": {"id": "doc-1", "title": "Гости",
+                     "text": "## Свет\n\n- Светло\n- Мягко\n\n## Цвет\n\nБежевый",
+                     "url": "/doc/guests"}
+        }
+        mock_yonote.attachments_list.return_value = {"data": []}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {
+            "id": "r", "title": "t", "url": "/r",
+        }}
+
+        from app import execute_copy_section_streaming
+
+        list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "![" not in created_text.split("---")[0]  # Before source reference
+
+
+class TestDuplicateDocument:
+    """Tests for duplicate_document tool in execute_tool()."""
+
+    @patch("app.yonote")
+    def test_duplicate_basic(self, mock_yonote):
+        mock_yonote.document_duplicate.return_value = {"data": {
+            "id": "dup-1", "title": "Копия документа", "url": "/doc/dup-1",
+        }}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/doc/dup-1"
+
+        from app import execute_tool
+        result = execute_tool("duplicate_document", {"document_id": "orig-1", "title": "Копия документа"})
+
+        mock_yonote.document_duplicate.assert_called_once_with(
+            "orig-1", title="Копия документа", publish=True, recursive=False,
+        )
+        assert result["result"]["document"]["id"] == "dup-1"
+
+    @patch("app.yonote")
+    def test_duplicate_recursive(self, mock_yonote):
+        mock_yonote.document_duplicate.return_value = {"data": {
+            "id": "dup-1", "title": "Copy", "url": "/doc/dup-1",
+        }}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/doc/dup-1"
+
+        from app import execute_tool
+        execute_tool("duplicate_document", {
+            "document_id": "orig-1", "recursive": True,
+        })
+
+        mock_yonote.document_duplicate.assert_called_once_with(
+            "orig-1", title=None, publish=True, recursive=True,
+        )
+
+    @patch("app.yonote")
+    def test_duplicate_emits_status_event(self, mock_yonote):
+        mock_yonote.document_duplicate.return_value = {"data": {
+            "id": "dup-1", "title": "Copy", "url": "/doc/dup-1",
+        }}
+        mock_yonote.full_url.return_value = "https://x.yonote.ru/doc/dup-1"
+
+        from app import execute_tool
+        result = execute_tool("duplicate_document", {"document_id": "orig-1"})
+
+        assert len(result["events"]) == 1
+        assert "Дублирую" in result["events"][0]
+
+
+class TestResolveAttachmentRefs:
+    """Tests for resolve_attachment_refs() — converts <attachment:uuid> to redirect URLs."""
+
+    BASE_URL = "https://app.yonote.ru/api"
+
+    def _make_mock_yonote(self):
+        mock = MagicMock()
+        mock.get_attachment_url.side_effect = (
+            lambda uuid: f"{self.BASE_URL}/attachments.redirect?id={uuid}"
+        )
+        return mock
+
+    @patch("app.yonote")
+    def test_single_image_replaced(self, mock_yonote):
+        """Single <attachment:uuid> ref is replaced with redirect URL."""
+        mock_yonote.get_attachment_url.side_effect = (
+            lambda uuid: f"{self.BASE_URL}/attachments.redirect?id={uuid}"
+        )
+        text = "![Фото](<attachment:abc123>)"
+        result = resolve_attachment_refs(text)
+        assert result == f"![Фото]({self.BASE_URL}/attachments.redirect?id=abc123)"
+
+    @patch("app.yonote")
+    def test_multiple_images_replaced(self, mock_yonote):
+        """All <attachment:uuid> refs in text are replaced."""
+        mock_yonote.get_attachment_url.side_effect = (
+            lambda uuid: f"{self.BASE_URL}/attachments.redirect?id={uuid}"
+        )
+        text = "![А](<attachment:uuid1>)\n\nТекст\n\n![Б](<attachment:uuid2>)"
+        result = resolve_attachment_refs(text)
+        assert f"![А]({self.BASE_URL}/attachments.redirect?id=uuid1)" in result
+        assert f"![Б]({self.BASE_URL}/attachments.redirect?id=uuid2)" in result
+        assert "<attachment:" not in result
+
+    @patch("app.yonote")
+    def test_no_attachments_unchanged(self, mock_yonote):
+        """Text without attachment refs is returned as-is."""
+        mock_yonote.get_attachment_url.side_effect = (
+            lambda uuid: f"{self.BASE_URL}/attachments.redirect?id={uuid}"
+        )
+        text = "Обычный текст без картинок\n\n- пункт 1\n- пункт 2"
+        result = resolve_attachment_refs(text)
+        assert result == text
+        mock_yonote.get_attachment_url.assert_not_called()
+
+    @patch("app.yonote")
+    def test_empty_text_returns_unchanged(self, mock_yonote):
+        """Empty and None text are returned without error."""
+        mock_yonote.get_attachment_url.side_effect = (
+            lambda uuid: f"{self.BASE_URL}/attachments.redirect?id={uuid}"
+        )
+        assert resolve_attachment_refs("") == ""
+        assert resolve_attachment_refs(None) is None
+        mock_yonote.get_attachment_url.assert_not_called()
+
+    @patch("app.yonote")
+    def test_url_format_correct(self, mock_yonote):
+        """Resulting URL uses attachments.redirect endpoint with id param."""
+        mock_yonote.get_attachment_url.side_effect = (
+            lambda uuid: f"{self.BASE_URL}/attachments.redirect?id={uuid}"
+        )
+        text = "![img](<attachment:deadbeef-1234-5678-abcd-ef0123456789>)"
+        result = resolve_attachment_refs(text)
+        assert "/attachments.redirect?id=deadbeef-1234-5678-abcd-ef0123456789" in result
+        assert "<attachment:" not in result
+
+    @patch("app.yonote")
+    def test_normal_image_urls_not_changed(self, mock_yonote):
+        """Images with regular HTTP URLs are not touched."""
+        mock_yonote.get_attachment_url.side_effect = (
+            lambda uuid: f"{self.BASE_URL}/attachments.redirect?id={uuid}"
+        )
+        text = "![screenshot](https://example.com/image.png)"
+        result = resolve_attachment_refs(text)
+        assert result == text
+        mock_yonote.get_attachment_url.assert_not_called()

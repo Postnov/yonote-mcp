@@ -99,6 +99,19 @@ class YonoteClient:
             data["append"] = True
         return self._post("documents.update", data)
 
+    def get_attachment_url(self, attachment_id):
+        """Get the redirect URL for an attachment (for use in documents)."""
+        return f"{self.base_url}/attachments.redirect?id={attachment_id}"
+
+    def document_duplicate(self, document_id, title=None, publish=True, recursive=False):
+        """Duplicate a document (server-side copy preserving all content including images)."""
+        data = {"id": document_id, "publish": publish}
+        if title:
+            data["title"] = title
+        if recursive:
+            data["recursive"] = True
+        return self._post("documents.duplicate", data)
+
     def document_delete(self, document_id, permanent=False):
         """Delete a document."""
         return self._post("documents.delete", {"id": document_id, "permanent": permanent})
@@ -127,6 +140,12 @@ class YonoteClient:
     def documents_viewed(self, limit=25, offset=0):
         """List recently viewed documents."""
         return self._post("documents.viewed", {"limit": limit, "offset": offset})
+
+    # --- Attachments ---
+
+    def attachments_list(self, document_id):
+        """List attachments (images, files) for a document."""
+        return self._post("attachments.list", {"documentId": document_id})
 
     # --- Collections (extended) ---
 

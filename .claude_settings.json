@@ -1,0 +1,34 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read(./**)",
+      "Write(./**)",
+      "Edit(./**)",
+      "Glob(./**)",
+      "Grep(./**)",
+      "Read(/Users/daniilpostnov/Documents/Projects/Pet-projects/yonote-mcp/**)",
+      "Write(/Users/daniilpostnov/Documents/Projects/Pet-projects/yonote-mcp/**)",
+      "Edit(/Users/daniilpostnov/Documents/Projects/Pet-projects/yonote-mcp/**)",
+      "Glob(/Users/daniilpostnov/Documents/Projects/Pet-projects/yonote-mcp/**)",
+      "Grep(/Users/daniilpostnov/Documents/Projects/Pet-projects/yonote-mcp/**)",
+      "Read(/Users/daniilpostnov/Documents/Projects/Pet-projects/yonote-mcp/.auto-claude/ideation/**)",
+      "Write(/Users/daniilpostnov/Documents/Projects/Pet-projects/yonote-mcp/.auto-claude/ideation/**)",
+      "Edit(/Users/daniilpostnov/Documents/Projects/Pet-projects/yonote-mcp/.auto-claude/ideation/**)",
+      "Bash(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "mcp__context7__resolve-library-id(*)",
+      "mcp__context7__get-library-docs(*)",
+      "mcp__graphiti-memory__search_nodes(*)",
+      "mcp__graphiti-memory__search_facts(*)",
+      "mcp__graphiti-memory__add_episode(*)",
+      "mcp__graphiti-memory__get_episodes(*)",
+      "mcp__graphiti-memory__get_entity_edge(*)"
+    ]
+  }
+}

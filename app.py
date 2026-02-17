@@ -72,6 +72,29 @@ def format_text_for_yonote(text):
     return "\n".join(result_lines)
 
 
+def resolve_attachment_refs(text):
+    """Replace <attachment:uuid> image refs with proper redirect URLs.
+
+    Converts: ![alt](<attachment:abc123>)
+    To:       ![alt](https://app.yonote.ru/api/attachments.redirect?id=abc123)
+
+    This allows images to display in new documents. The attachment redirect
+    URL works for logged-in users via session cookie authentication.
+    """
+    if not text:
+        return text
+
+    pattern = re.compile(r'(!\[[^\]]*\])\(<attachment:([^>]+)>\)')
+
+    def replace_ref(match):
+        img_prefix = match.group(1)   # ![alt text]
+        uuid = match.group(2)
+        url = yonote.get_attachment_url(uuid)
+        return f'{img_prefix}({url})'
+
+    return pattern.sub(replace_ref, text)
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -370,6 +393,23 @@ def execute_tool(tool, params, generate_sse=False):
         col = api_result.get("data", {})
         result = {"collection": {"id": col.get("id"), "name": col.get("name")}}
 
+    elif tool == "duplicate_document":
+        events.append(sse_event("status", {"message": "Дублирую документ..."}))
+        api_result = yonote.document_duplicate(
+            params.get("document_id"),
+            title=params.get("title"),
+            publish=params.get("publish", True),
+            recursive=params.get("recursive", False),
+        )
+        doc = api_result.get("data", {})
+        result = {
+            "document": {
+                "id": doc.get("id"),
+                "title": doc.get("title"),
+                "url": yonote.full_url(doc.get("url", "")),
+            }
+        }
+
     elif tool == "delete_collection":
         events.append(sse_event("status", {"message": "Удаляю коллекцию..."}))
         yonote.collection_delete(params.get("collection_id"))
@@ -467,11 +507,50 @@ def execute_translate_streaming(params):
     }
 
 
+def _strip_markdown_formatting(text):
+    """Strip markdown inline formatting: **bold**, *italic*, ~~strike~~, `code`."""
+    import re
+    # Remove bold/italic markers: **text** → text, *text* → text, __text__ → text
+    text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)
+    text = re.sub(r'_{1,3}(.*?)_{1,3}', r'\1', text)
+    # Remove strikethrough: ~~text~~ → text
+    text = re.sub(r'~~(.*?)~~', r'\1', text)
+    # Remove inline code: `text` → text
+    text = re.sub(r'`(.*?)`', r'\1', text)
+    return text.strip()
+
+
+def _is_plain_heading_candidate(stripped):
+    """Return True if the stripped line looks like a plain-text heading.
+
+    Checks: short, no excluded prefixes, no sentence-ending punctuation.
+    Does NOT check surrounding empty lines (caller handles that).
+    """
+    if not stripped:
+        return False
+    is_list_item = (stripped.startswith(("- ", "* ", "\u2022"))
+                    or stripped.startswith(("-\t", "*\t")))
+    return (len(stripped) < 80
+            and not stripped.startswith(("http", "!", "[", ">", "|", "\\", "/"))
+            and not is_list_item
+            and stripped[-1] not in ".!?;:,)")
+
+
 def extract_section_from_text(text, heading_name):
     """Extract text under a specific heading from document text.
 
-    Handles both markdown headings (## Heading) and plain text headings
-    (short lines preceded by an empty line).
+    Supports two document formats found in Yonote:
+      Format A (## headings or plain text with empty lines on both sides):
+        ## Свет
+        content...
+        ## Цвет
+
+      Format B (plain text headings, no empty lines between heading and content):
+        Свет
+        content...
+        (empty line)
+        Цвет
+
     Returns the content from the heading to the next heading, or None if not found.
     """
     if not text or not heading_name:
@@ -480,57 +559,192 @@ def extract_section_from_text(text, heading_name):
     lines = text.split("\n")
     heading_lower = heading_name.lower().strip()
 
-    # First pass: find all headings and their line positions
-    headings = []
+    # --- Path A: strict heuristic (## headings + plain text with BOTH empty lines) ---
+    headings_a = []
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped:
             continue
-
         # Markdown heading: ## Something
         if stripped.startswith("#"):
-            clean = stripped.lstrip("#").strip()
-            headings.append((i, clean))
+            clean = _strip_markdown_formatting(stripped.lstrip("#").strip())
+            headings_a.append((i, clean))
             continue
-
-        # Plain text heading: short line surrounded by empty lines on both sides
-        if len(stripped) < 80 and not stripped.startswith(("-", "*", "\u2022", "http")):
+        # Plain text heading: requires empty lines on BOTH sides
+        if _is_plain_heading_candidate(stripped):
             prev_is_empty = i == 0 or not lines[i - 1].strip()
             next_is_empty = i == len(lines) - 1 or not lines[i + 1].strip()
             if prev_is_empty and next_is_empty:
-                headings.append((i, stripped))
+                headings_a.append((i, _strip_markdown_formatting(stripped)))
 
-    # Find matching heading
+    # Look for target in Path A
     target_idx = None
     next_heading_idx = None
-
-    for pos, (line_idx, heading_text) in enumerate(headings):
+    for pos, (line_idx, heading_text) in enumerate(headings_a):
         if heading_text.lower() == heading_lower:
             target_idx = line_idx
-            if pos + 1 < len(headings):
-                next_heading_idx = headings[pos + 1][0]
+            if pos + 1 < len(headings_a):
+                next_heading_idx = headings_a[pos + 1][0]
+            break
+
+    if target_idx is not None:
+        start = target_idx + 1
+        end = next_heading_idx if next_heading_idx is not None else len(lines)
+        section_text = "\n".join(lines[start:end]).strip()
+        return section_text if section_text else None
+
+    # --- Path B: plain text headings without surrounding empty lines ---
+    # Find target by exact line match (no empty line requirement)
+    target_idx = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        clean = _strip_markdown_formatting(stripped)
+        if clean.lower() == heading_lower and _is_plain_heading_candidate(stripped):
+            target_idx = i
             break
 
     if target_idx is None:
         return None
 
-    # Extract content between this heading and the next
+    # Find next heading: first line after an empty line that looks like a heading
+    # (In Format B, empty lines appear only between sections, not within them)
+    next_heading_idx = len(lines)
+    for i in range(target_idx + 1, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped:
+            continue
+        prev_is_empty = i > 0 and not lines[i - 1].strip()
+        if prev_is_empty:
+            if stripped.startswith("#") or _is_plain_heading_candidate(stripped):
+                next_heading_idx = i
+                break
+
     start = target_idx + 1
-    end = next_heading_idx if next_heading_idx is not None else len(lines)
-    section_text = "\n".join(lines[start:end]).strip()
+    section_text = "\n".join(lines[start:next_heading_idx]).strip()
     return section_text if section_text else None
 
 
-def fetch_all_descendants(parent_id, status_callback=None):
+def _match_image_to_heading(name, heading):
+    """Check if image filename contains a tag matching the heading.
+
+    Returns:
+      'match'    — filename has a tag that matches the heading
+      'mismatch' — filename has a tag but it's for a different heading
+      'untagged' — filename has no recognizable tag
+
+    Tag formats supported (case-insensitive, whole word):
+      '#свет - описание.png'   → tag 'свет'
+      '#свет описание.png'     → tag 'свет'
+      'свет - описание.png'    → tag 'свет'
+      'свет описание.png'      → tag 'свет'
+      'рассвет.png'            → NOT matched (part of word)
+      'image.png'              → untagged
+    """
+    if not name or not heading:
+        return "untagged"
+
+    heading_lower = heading.lower().strip()
+
+    # Remove file extension for matching
+    name_clean = re.sub(r'\.\w+$', '', name).strip()
+    name_lower = name_clean.lower()
+
+    # Strip leading '#' if present
+    if name_lower.startswith("#"):
+        name_lower = name_lower[1:]
+        name_clean = name_clean[1:]
+
+    # Check if heading appears as a whole word at the start
+    # Pattern: heading followed by separator or end of string
+    pattern = re.compile(
+        r'^' + re.escape(heading_lower) + r'(?:\s*[-—]\s*|\s+|$)',
+        re.IGNORECASE,
+    )
+    if pattern.match(name_lower):
+        return "match"
+
+    # Check if name starts with any word that looks like a tag
+    # (a short word followed by separator) — if so, it's a tag for a different heading
+    tag_pattern = re.compile(r'^[\w]+(?:\s*[-—]\s*|\s+)', re.UNICODE)
+    if tag_pattern.match(name_lower) and len(name_lower.split()[0]) < 30:
+        return "mismatch"
+
+    return "untagged"
+
+
+def fetch_document_images(document_id, heading=None):
+    """Fetch image attachments for a document via attachments.list API.
+
+    If heading is provided, filters images by tag in filename:
+      - '#свет - фото.png'  → included when heading='Свет'
+      - 'свет - фото.png'   → included when heading='Свет'
+      - 'image.png' (no tag) → included (no tag = could be any section)
+      - '#цвет - палитра.png' → excluded when heading='Свет'
+
+    Returns a list of markdown image strings.
+    """
+    try:
+        result = yonote.attachments_list(document_id)
+        attachments = result.get("data", [])
+    except Exception:
+        return []
+
+    images = []
+    for att in attachments:
+        content_type = att.get("contentType", "")
+        if not content_type.startswith("image/"):
+            continue
+        name = att.get("name", "image")
+        redirect_url = att.get("redirectUrl", "")
+        if not redirect_url:
+            continue
+
+        match_result = _match_image_to_heading(name, heading)
+
+        if match_result == "mismatch":
+            # Image is tagged for a different heading — skip
+            continue
+
+        full_url = yonote.full_url(redirect_url)
+        # Clean display name: strip tag prefix for cleaner output
+        display_name = name
+        if match_result == "match":
+            clean = re.sub(r'\.\w+$', '', name).strip()
+            if clean.startswith("#"):
+                clean = clean[1:]
+            heading_lower = heading.lower().strip()
+            # Remove the tag + separator prefix
+            stripped = re.sub(
+                r'^' + re.escape(heading_lower) + r'\s*[-—]\s*',
+                '', clean, flags=re.IGNORECASE,
+            ).strip()
+            if stripped and stripped != clean:
+                # Restore extension
+                ext_match = re.search(r'\.\w+$', name)
+                ext = ext_match.group() if ext_match else ""
+                display_name = stripped + ext
+            elif clean.lower() == heading_lower:
+                display_name = name  # Just the tag, keep original
+
+        images.append(f"![{display_name}]({full_url})")
+    return images
+
+
+def fetch_all_descendants(parent_id, root_title=None, status_callback=None):
     """Recursively fetch all descendant pages of a parent document.
 
-    Returns a flat list of {id, title} dicts for ALL nested children at any depth.
+    Returns a flat list of {id, title, path} dicts for ALL nested children at any depth.
+    path is a list of ancestor titles (e.g. ["Авгодом", "Интерьер", "1 этаж, Гости"]).
     """
     all_pages = []
-    queue = [parent_id]
+    # Queue items: (parent_id, parent_path)
+    root_path = [root_title] if root_title else []
+    queue = [(parent_id, root_path)]
 
     while queue:
-        current_parent = queue.pop(0)
+        current_parent, parent_path = queue.pop(0)
         try:
             api_result = yonote.documents_list(parent_document_id=current_parent, limit=100)
             children = api_result.get("data", [])
@@ -540,9 +754,10 @@ def fetch_all_descendants(parent_id, status_callback=None):
         for child in children:
             child_id = child.get("id")
             child_title = child.get("title", "Без названия")
-            all_pages.append({"id": child_id, "title": child_title})
+            child_path = parent_path + [child_title]
+            all_pages.append({"id": child_id, "title": child_title, "path": child_path})
             # Add to queue to fetch its children too
-            queue.append(child_id)
+            queue.append((child_id, child_path))
 
         if status_callback and children:
             status_callback(len(all_pages))
@@ -559,12 +774,22 @@ def execute_extract_sections_streaming(params):
     parent_doc_id = params.get("parent_document_id")
     heading = params.get("heading")
     output_title = params.get("output_title", f"Отчет: {heading}")
+    breadcrumbs = params.get("breadcrumbs", False)
 
     # Step 1: Recursively collect all descendant pages
     yield sse_event("status", {"message": "Загружаю дочерние страницы..."})
 
+    # Get root document title for breadcrumbs path
+    root_title = None
+    if breadcrumbs:
+        try:
+            root_doc = yonote.document_info(parent_doc_id)
+            root_title = root_doc.get("data", {}).get("title")
+        except Exception:
+            pass
+
     # We can't yield from inside a callback, so collect pages first
-    all_pages = fetch_all_descendants(parent_doc_id)
+    all_pages = fetch_all_descendants(parent_doc_id, root_title=root_title)
     total = len(all_pages)
 
     if total == 0:
@@ -575,6 +800,9 @@ def execute_extract_sections_streaming(params):
 
     # Step 2: Read each page and extract sections
     found_sections = []
+    empty_text_pages = []   # pages where API returned empty/null text
+    section_not_found_pages = []  # pages where text exists but heading not found
+    error_pages = []
     for i, page in enumerate(all_pages):
         page_id = page.get("id")
         page_title = page.get("title", "Без названия")
@@ -586,20 +814,57 @@ def execute_extract_sections_streaming(params):
         try:
             doc_result = yonote.document_info(page_id)
             doc = doc_result.get("data", {})
-            text = doc.get("text", "")
+            text = doc.get("text", "") or ""  # Handle None from API
 
-            section = extract_section_from_text(text, heading)
-            if section:
-                found_sections.append({
-                    "page_title": page_title,
-                    "content": section,
-                })
-        except Exception:
-            pass  # Skip documents that can't be read
+            # Fetch images attached to this document, filtered by heading tag
+            images = fetch_document_images(page_id, heading=heading)
+
+            if not text.strip():
+                # API returned empty text — likely a block-based document
+                empty_text_pages.append(page_title)
+            else:
+                section = extract_section_from_text(text, heading)
+                if section:
+                    section = resolve_attachment_refs(section)  # Fix image URLs for new doc
+                    # Append matching images to the section
+                    if images:
+                        section += "\n\n" + "\n\n".join(images)
+                    found_sections.append({
+                        "page_title": page_title,
+                        "path": page.get("path", []),
+                        "content": section,
+                    })
+                else:
+                    section_not_found_pages.append(page_title)
+        except Exception as e:
+            error_pages.append(f"{page_title}: {str(e)}")
+
+    # Report skipped/error pages in status
+    if error_pages:
+        yield sse_event("status", {
+            "message": f"Ошибки при чтении: {'; '.join(error_pages[:5])}"
+        })
+    if empty_text_pages:
+        yield sse_event("status", {
+            "message": f"⚠️ Пустой текст (блочный формат?): {', '.join(empty_text_pages[:10])}"
+        })
+    if section_not_found_pages:
+        yield sse_event("status", {
+            "message": f"Секция «{heading}» не найдена в: {', '.join(section_not_found_pages[:10])}"
+        })
 
     if not found_sections:
+        detail_parts = []
+        if empty_text_pages:
+            detail_parts.append(f"{len(empty_text_pages)} страниц с пустым текстом")
+        if section_not_found_pages:
+            detail_parts.append(f"{len(section_not_found_pages)} без секции «{heading}»")
+        if error_pages:
+            detail_parts.append(f"{len(error_pages)} с ошибками")
+        detail = "; ".join(detail_parts) if detail_parts else ""
         yield {"_result": {
-            "message": f"Секция «{heading}» не найдена ни в одном из {total} документов",
+            "message": f"Секция «{heading}» не найдена ни в одном из {total} документов"
+                       + (f" ({detail})" if detail else ""),
         }}
         return
 
@@ -611,6 +876,9 @@ def execute_extract_sections_streaming(params):
     compiled_parts = []
     for section in found_sections:
         compiled_parts.append(f"## {section['page_title']}")
+        if breadcrumbs and section.get("path"):
+            breadcrumb_text = " → ".join(section["path"])
+            compiled_parts.append(f"*{breadcrumb_text}*")
         compiled_parts.append("")
         compiled_parts.append(section["content"])
         compiled_parts.append("")
@@ -645,6 +913,82 @@ def execute_extract_sections_streaming(params):
     }}
 
 
+def execute_copy_section_streaming(params):
+    """Generator for copy_section that yields SSE events in real-time.
+
+    Reads a single document, extracts a section under a heading,
+    and creates a new document with that content.
+    """
+    doc_id = params.get("document_id")
+    heading = params.get("heading")
+    output_title = params.get("output_title", f"Копия: {heading}")
+
+    # Step 1: Read the source document
+    yield sse_event("status", {"message": "Загружаю документ..."})
+    api_result = yonote.document_info(doc_id)
+    doc = api_result.get("data", {})
+    text = doc.get("text", "") or ""
+    source_title = doc.get("title", "")
+    source_url = yonote.full_url(doc.get("url", ""))
+
+    if not text.strip():
+        yield {"_result": {
+            "message": f"Документ «{source_title}» не содержит текста (возможно, контент в блочном формате). Попробуйте duplicate_document для полного копирования.",
+        }}
+        return
+
+    # Step 2: Extract the section
+    yield sse_event("status", {"message": f"Ищу секцию «{heading}»..."})
+    section = extract_section_from_text(text, heading)
+
+    if not section:
+        yield {"_result": {
+            "message": f"Секция «{heading}» не найдена в документе «{source_title}».",
+        }}
+        return
+
+    # Resolve attachment refs so images work in the new document
+    section = resolve_attachment_refs(section)
+
+    # Fetch images attached to this document, filtered by heading tag
+    yield sse_event("status", {"message": "Загружаю вложения..."})
+    images = fetch_document_images(doc_id, heading=heading)
+    if images:
+        section += "\n\n" + "\n\n".join(images)
+
+    # Step 3: Create new document with the section content
+    yield sse_event("status", {"message": f"Создаю страницу «{output_title}»..."})
+
+    col_id = params.get("collection_id")
+    if not col_id:
+        cols_result = yonote.collections_list(limit=1)
+        cols = cols_result.get("data", [])
+        if cols:
+            col_id = cols[0].get("id")
+
+    # Add source reference
+    compiled_text = section + f"\n\n---\n*Источник: [{source_title}]({source_url})*"
+
+    create_args = {"title": output_title, "text": compiled_text, "publish": True}
+    if col_id:
+        create_args["collection_id"] = col_id
+    if params.get("parent_document_id"):
+        create_args["parent_document_id"] = params["parent_document_id"]
+
+    api_result = yonote.document_create(**create_args)
+    new_doc = api_result.get("data", {})
+
+    yield {"_result": {
+        "document": {
+            "id": new_doc.get("id"),
+            "title": new_doc.get("title"),
+            "url": yonote.full_url(new_doc.get("url", "")),
+        },
+        "source_document": source_title,
+        "heading": heading,
+    }}
+
+
 def execute_action_streaming(action):
     """Execute an action, yielding SSE events in real-time and returning result.
 
@@ -659,6 +1003,14 @@ def execute_action_streaming(action):
     if tool == "translate_document":
         result = None
         for item in execute_translate_streaming(params):
+            if isinstance(item, dict):
+                result = item["_result"]
+            else:
+                yield (item, None)
+        yield (None, {"tool": tool, "result": result})
+    elif tool == "copy_section":
+        result = None
+        for item in execute_copy_section_streaming(params):
             if isinstance(item, dict):
                 result = item["_result"]
             else:
