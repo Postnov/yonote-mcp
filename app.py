@@ -167,7 +167,7 @@ def chat():
                 # If these were only read actions, ask AI for next step
                 if has_only_read_actions:
                     yield sse_event("status", {"message": "Анализирую результаты..."})
-                    plan = agent.process_message("Продолжай на основе полученных результатов. Если нужны дальнейшие действия — предложи их. Если задача выполнена — ответь пользователю.")
+                    plan = agent.process_message("Продолжай на основе полученных результатов. Если задача поиска — ответь пользователю что нашлось (или не нашлось). НЕ предлагай создавать новые страницы, если пользователь просил только найти информацию.")
                     continue
 
                 # Write actions executed — we're done

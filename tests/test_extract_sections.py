@@ -1677,6 +1677,37 @@ class TestDocumentExportMarkdown:
             client.document_export_markdown("doc-1")
 
 
+class TestAIPromptRules:
+    """Tests verifying AI prompt contains critical behavior rules."""
+
+    def test_prompt_forbids_creating_pages_on_search(self):
+        """AI prompt must explicitly forbid creating pages when user asks to search."""
+        from ai_agent import SYSTEM_PROMPT
+        prompt_lower = SYSTEM_PROMPT.lower()
+        # Must contain rule about not creating pages during search
+        assert "никогда не предлагай создать" in prompt_lower or "никогда не предлагай создавать" in prompt_lower
+
+    def test_prompt_mentions_search_only_read(self):
+        """Prompt must say search/find is a READ operation."""
+        from ai_agent import SYSTEM_PROMPT
+        prompt_lower = SYSTEM_PROMPT.lower()
+        assert "чтение" in prompt_lower or "чтения" in prompt_lower
+
+    def test_prompt_says_report_not_found(self):
+        """When nothing found, AI should report it, not create pages."""
+        from ai_agent import SYSTEM_PROMPT
+        assert "не нашёл" in SYSTEM_PROMPT or "не найдена" in SYSTEM_PROMPT or "не найдено" in SYSTEM_PROMPT
+
+    def test_agentic_loop_continuation_message(self):
+        """The continuation message in agentic loop should tell AI not to create pages."""
+        from app import app
+        import inspect
+        # Read the source of the chat route to verify the continuation message
+        import app as app_module
+        source = inspect.getsource(app_module.chat)
+        assert "НЕ предлагай создавать новые страницы" in source
+
+
 class TestDuplicateDocument:
     """Tests for duplicate_document tool in execute_tool()."""
 
