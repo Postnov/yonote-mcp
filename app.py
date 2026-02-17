@@ -244,19 +244,48 @@ def execute_tool(tool, params, generate_sse=False):
 
     if tool == "search":
         events.append(sse_event("status", {"message": "Ищу информацию..."}))
-        api_result = yonote.documents_search(params.get("query", ""))
+        query = params.get("query", "")
+        api_result = yonote.documents_search(query)
         documents = api_result.get("data", [])
         docs_list = []
-        for i, doc in enumerate(documents):
+        query_lower = query.lower()
+        for doc in documents:
             d = doc.get("document", doc)
+            text = (d.get("text", "") or "")
+            ranking = doc.get("ranking", 0)
+            # Skip empty pages and near-zero ranking results
+            if not text.strip() and ranking and float(ranking) < 1e-10:
+                continue
+            # Build snippet: prefer context from API, fallback to text around query match
+            context = doc.get("context", "")
+            snippet = ""
+            if context:
+                snippet = context[:200]
+            elif text.strip():
+                idx = text.lower().find(query_lower)
+                if idx >= 0:
+                    start = max(0, idx - 50)
+                    snippet = ("..." if start > 0 else "") + text[start:idx + len(query) + 100].strip()
+                    if idx + len(query) + 100 < len(text):
+                        snippet += "..."
+                else:
+                    snippet = text[:200].strip()
             docs_list.append({
-                "number": i + 1,
+                "number": len(docs_list) + 1,
                 "id": d.get("id"),
                 "title": d.get("title"),
-                "text": (d.get("text", "") or "")[:300],
+                "text": text[:300],
+                "snippet": snippet,
                 "url": yonote.full_url(d.get("url", "")),
             })
-        result = {"documents": docs_list, "count": len(docs_list)}
+        if not docs_list and documents:
+            result = {
+                "documents": [],
+                "count": 0,
+                "note": f"Поиск по «{query}» вернул {len(documents)} результатов, но все оказались пустыми страницами. Попробуйте другой запрос или используйте list_documents для навигации по коллекциям.",
+            }
+        else:
+            result = {"documents": docs_list, "count": len(docs_list)}
 
     elif tool == "list_collections":
         events.append(sse_event("status", {"message": "Загружаю коллекции..."}))
