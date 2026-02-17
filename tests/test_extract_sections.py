@@ -1677,6 +1677,347 @@ class TestDocumentExportMarkdown:
             client.document_export_markdown("doc-1")
 
 
+class TestDeepSearch:
+    """Tests for execute_deep_search_streaming() — full-text content scanning."""
+
+    @patch("app.yonote")
+    def test_finds_text_in_document(self, mock_yonote):
+        """Should find query in document text field."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-1", "name": "Проект"},
+        ]}
+        mock_yonote.documents_list.side_effect = [
+            # Collection documents
+            {"data": [
+                {"id": "d1", "title": "Интерьер", "url": "/doc/d1",
+                 "text": "Стены из керамогранита\nПол деревянный"},
+            ]},
+            # d1 children
+            {"data": []},
+        ]
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "керамогранит"}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        assert len(result_items) == 1
+        result = result_items[0]["_result"]
+        assert result["count"] == 1
+        assert result["documents"][0]["id"] == "d1"
+        assert "керамогранит" in result["documents"][0]["snippet"].lower()
+
+    @patch("app.yonote")
+    def test_finds_text_in_child_page(self, mock_yonote):
+        """Should find query in nested child pages."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-1", "name": "Проект"},
+        ]}
+        mock_yonote.documents_list.side_effect = [
+            # Collection: 1 top-level doc
+            {"data": [
+                {"id": "parent", "title": "Родитель", "url": "/doc/parent",
+                 "text": "Содержание"},
+            ]},
+            # parent -> 1 child
+            {"data": [
+                {"id": "child", "title": "Текстура", "url": "/doc/child",
+                 "text": "Если камень/керамогранит, то не мраморная текстура"},
+            ]},
+            # child -> 0 children
+            {"data": []},
+        ]
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "керамогранит"}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 1
+        assert result["documents"][0]["id"] == "child"
+        assert result["documents"][0]["title"] == "Текстура"
+
+    @patch("app.yonote")
+    def test_export_fallback_for_empty_text(self, mock_yonote):
+        """Phase 2: export finds content when text field is empty."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-1", "name": "Проект"},
+        ]}
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "d1", "title": "Блочная", "url": "/doc/d1",
+                 "text": ""},  # Empty text (ProseMirror block content)
+            ]},
+            {"data": []},  # no children
+        ]
+        mock_yonote.document_export_markdown.return_value = (
+            "## Текстура\n\n- Керамогранит на полу\n- Дерево на стенах"
+        )
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "керамогранит"}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 1
+        assert result["documents"][0]["id"] == "d1"
+
+    @patch("app.yonote")
+    def test_phase2_export_for_partial_text(self, mock_yonote):
+        """Phase 2: export finds content when text field has partial content
+        but ProseMirror blocks (lists, tables) are missing from it."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-1", "name": "Проект"},
+        ]}
+        mock_yonote.documents_list.side_effect = [
+            # Collection: parent doc
+            {"data": [
+                {"id": "parent", "title": "Интерьер", "url": "/doc/parent",
+                 "text": "Дизайн интерьера"},
+            ]},
+            # parent children: 1 child with partial text
+            {"data": [
+                {"id": "child", "title": "1 этаж, Гости", "url": "/doc/child",
+                 "text": "Текстура\nСвет\nМебель"},  # Has some text, but list items missing
+            ]},
+            # child children
+            {"data": []},
+        ]
+
+        def mock_export(doc_id):
+            if doc_id == "child":
+                return (
+                    "## Текстура\n\n"
+                    "- Если камень/керамогранит, то не мраморная текстура\n"
+                    "- Матовая, но гладкая\n\n"
+                    "## Свет\n\nТёплый свет"
+                )
+            if doc_id == "parent":
+                return "Дизайн интерьера"
+            return None
+
+        mock_yonote.document_export_markdown.side_effect = mock_export
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "керамогранит"}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 1
+        assert result["documents"][0]["id"] == "child"
+        assert result["documents"][0]["title"] == "1 этаж, Гости"
+        assert "керамогранит" in result["documents"][0]["snippet"].lower()
+
+    @patch("app.yonote")
+    def test_no_results(self, mock_yonote):
+        """Should return empty with note when nothing found in both phases."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-1", "name": "Проект"},
+        ]}
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "d1", "title": "Интерьер", "url": "/doc/d1",
+                 "text": "Дерево и камень"},
+            ]},
+            {"data": []},
+        ]
+        # Phase 2 export also doesn't find the query
+        mock_yonote.document_export_markdown.return_value = "Дерево и камень — полный текст"
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "бетон"}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 0
+        assert "note" in result
+        assert "бетон" in result["note"]
+
+    @patch("app.yonote")
+    def test_deduplication(self, mock_yonote):
+        """Same document shouldn't appear twice if found in multiple places."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-1", "name": "A"},
+            {"id": "col-2", "name": "B"},
+        ]}
+        # Same doc appears in both collections (shared)
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "d1", "title": "Общая", "url": "/doc/d1",
+                 "text": "Керамогранит на полу"},
+            ]},
+            {"data": []},  # d1 children
+            {"data": [
+                {"id": "d1", "title": "Общая", "url": "/doc/d1",
+                 "text": "Керамогранит на полу"},
+            ]},
+            {"data": []},  # d1 children again
+        ]
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "керамогранит"}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 1  # Not 2
+
+    @patch("app.yonote")
+    def test_specific_collection(self, mock_yonote):
+        """Should scan only the specified collection when collection_id is given."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "d1", "title": "Текстура", "url": "/doc/d1",
+                 "text": "Керамогранит травертин"},
+            ]},
+            {"data": []},
+        ]
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({
+            "query": "керамогранит",
+            "collection_id": "col-specific",
+        }))
+
+        # Should NOT call collections_list since specific collection is given
+        mock_yonote.collections_list.assert_not_called()
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 1
+
+    @patch("app.yonote")
+    def test_emits_status_events(self, mock_yonote):
+        """Should emit SSE status events during scanning."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-1", "name": "Мой проект"},
+        ]}
+        mock_yonote.documents_list.side_effect = [
+            {"data": [
+                {"id": "d1", "title": "А", "url": "/a", "text": "Текст"},
+            ]},
+            {"data": []},
+        ]
+        # Phase 2 export (since Phase 1 finds nothing for "что-то")
+        mock_yonote.document_export_markdown.return_value = "Текст"
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "что-то"}))
+
+        sse_events = [e for e in events if isinstance(e, str)]
+        sse_text = " ".join(sse_events)
+        assert "Загружаю коллекции" in sse_text
+        assert "Мой проект" in sse_text
+        assert "Быстрый скан" in sse_text
+
+    @patch("app.yonote")
+    def test_empty_query(self, mock_yonote):
+        """Empty query should return immediately."""
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": ""}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 0
+
+
+class TestBuildResponse:
+    """Tests for build_response() — accumulates documents from multiple results."""
+
+    def test_single_search_with_results(self):
+        from app import build_response
+        results = [
+            {"tool": "search", "result": {"documents": [
+                {"id": "d1", "title": "Page 1", "number": 1},
+            ], "count": 1}},
+        ]
+        combined = build_response(results, "Вот результаты:")
+        assert combined["message"] == "Вот результаты:"
+        assert len(combined["documents"]) == 1
+        assert combined["documents"][0]["id"] == "d1"
+
+    def test_empty_search_does_not_erase_previous(self):
+        """Later empty search should NOT wipe out earlier found documents."""
+        results = [
+            {"tool": "search", "result": {"documents": [
+                {"id": "d1", "title": "Растения", "number": 1},
+            ], "count": 1}},
+            {"tool": "search", "result": {"documents": [], "count": 0}},
+            {"tool": "search", "result": {"documents": [], "count": 0}},
+        ]
+        from app import build_response
+        combined = build_response(results, "Нашёл страницу:")
+        assert "documents" in combined
+        assert len(combined["documents"]) == 1
+        assert combined["documents"][0]["id"] == "d1"
+
+    def test_multiple_searches_accumulated(self):
+        """Documents from multiple searches are merged and deduplicated."""
+        results = [
+            {"tool": "search", "result": {"documents": [
+                {"id": "d1", "title": "Page A", "number": 1},
+            ], "count": 1}},
+            {"tool": "search", "result": {"documents": [
+                {"id": "d2", "title": "Page B", "number": 1},
+                {"id": "d1", "title": "Page A", "number": 2},  # duplicate
+            ], "count": 2}},
+        ]
+        from app import build_response
+        combined = build_response(results, "Результаты:")
+        assert len(combined["documents"]) == 2
+        ids = [d["id"] for d in combined["documents"]]
+        assert "d1" in ids
+        assert "d2" in ids
+
+    def test_documents_renumbered(self):
+        """Accumulated documents get sequential numbers."""
+        results = [
+            {"tool": "search", "result": {"documents": [
+                {"id": "d1", "title": "A", "number": 1},
+            ], "count": 1}},
+            {"tool": "list_documents", "result": {"documents": [
+                {"id": "d2", "title": "B", "number": 1},
+                {"id": "d3", "title": "C", "number": 2},
+            ], "count": 2}},
+        ]
+        from app import build_response
+        combined = build_response(results, "Результаты:")
+        numbers = [d["number"] for d in combined["documents"]]
+        assert numbers == [1, 2, 3]
+
+    def test_no_documents_key_when_none_found(self):
+        """When no documents found across all results, don't add empty documents key."""
+        results = [
+            {"tool": "search", "result": {"documents": [], "count": 0}},
+            {"tool": "search", "result": {"documents": [], "count": 0}},
+        ]
+        from app import build_response
+        combined = build_response(results, "Ничего не найдено")
+        assert "documents" not in combined
+
+    def test_collections_and_documents_coexist(self):
+        """Collections and documents from different results should both appear."""
+        results = [
+            {"tool": "list_collections", "result": {"collections": [
+                {"id": "c1", "name": "Коллекция"},
+            ], "count": 1}},
+            {"tool": "search", "result": {"documents": [
+                {"id": "d1", "title": "Документ", "number": 1},
+            ], "count": 1}},
+        ]
+        from app import build_response
+        combined = build_response(results, "Результаты:")
+        assert "collections" in combined
+        assert "documents" in combined
+        assert len(combined["collections"]) == 1
+        assert len(combined["documents"]) == 1
+
+
 class TestAIPromptRules:
     """Tests verifying AI prompt contains critical behavior rules."""
 

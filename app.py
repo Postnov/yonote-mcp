@@ -145,7 +145,7 @@ def chat():
 
                 # Execute actions
                 all_results = []
-                read_tools = ("search", "list_collections", "list_documents", "document_info", "list_drafts", "list_viewed")
+                read_tools = ("search", "list_collections", "list_documents", "document_info", "list_drafts", "list_viewed", "deep_search")
                 has_only_read_actions = all(
                     a.get("tool") in read_tools
                     for a in actions
@@ -1067,6 +1067,191 @@ def execute_copy_section_streaming(params):
     }}
 
 
+def execute_deep_search_streaming(params):
+    """Generator for deep_search that yields SSE events in real-time.
+
+    Two-phase approach:
+    - Phase 1 (fast): scan text fields from documents.list API
+    - Phase 2 (slow, only if Phase 1 found nothing): export each document
+      via document_export_markdown for full content including ProseMirror blocks
+
+    This finds content inside lists, tables, and other ProseMirror blocks
+    that are missing from the text field.
+    """
+    query = params.get("query", "").strip()
+    collection_id = params.get("collection_id")
+
+    if not query:
+        yield {"_result": {"documents": [], "count": 0, "message": "Пустой запрос"}}
+        return
+
+    query_lower = query.lower()
+
+    # Step 1: Get collections to scan
+    if collection_id:
+        collections = [{"id": collection_id, "name": ""}]
+    else:
+        yield sse_event("status", {"message": "Загружаю коллекции..."})
+        try:
+            cols_result = yonote.collections_list(limit=100)
+            collections = cols_result.get("data", [])
+        except Exception as e:
+            yield {"_result": {"documents": [], "count": 0, "message": f"Ошибка: {e}"}}
+            return
+
+    found = []
+    seen_ids = set()
+    total_scanned = 0
+    # Collect all pages for Phase 2 (id, title, url)
+    all_pages = []
+    all_pages_ids = set()
+
+    def make_snippet(text, query_lower, query_len):
+        """Extract a text snippet around the query match."""
+        idx = text.lower().find(query_lower)
+        if idx < 0:
+            return text[:200].strip()
+        start = max(0, idx - 60)
+        end = min(len(text), idx + query_len + 100)
+        snippet = ""
+        if start > 0:
+            snippet = "..."
+        snippet += text[start:end].strip()
+        if end < len(text):
+            snippet += "..."
+        return snippet
+
+    def check_document(doc_id, doc_title, doc_url, text):
+        """Check if text contains query, add to found if so."""
+        nonlocal total_scanned
+        total_scanned += 1
+        if doc_id in seen_ids:
+            return
+        if not text or not text.strip():
+            return
+        if query_lower in text.lower():
+            seen_ids.add(doc_id)
+            snippet = make_snippet(text, query_lower, len(query))
+            found.append({
+                "id": doc_id,
+                "title": doc_title,
+                "url": yonote.full_url(doc_url) if doc_url else "",
+                "snippet": snippet,
+            })
+
+    def collect_page(doc_id, doc_title, doc_url):
+        """Remember page for potential Phase 2 export."""
+        if doc_id and doc_id not in all_pages_ids:
+            all_pages_ids.add(doc_id)
+            all_pages.append({"id": doc_id, "title": doc_title, "url": doc_url})
+
+    def scan_children_recursive(parent_id, depth=0):
+        """Recursively scan children of a document (Phase 1: text fields only)."""
+        if depth > 5:  # Safety limit
+            return
+        try:
+            children_result = yonote.documents_list(parent_document_id=parent_id, limit=100)
+            children = children_result.get("data", [])
+        except Exception:
+            return
+
+        for child in children:
+            child_id = child.get("id")
+            child_title = child.get("title", "")
+            child_url = child.get("url", "")
+            child_text = child.get("text", "") or ""
+
+            collect_page(child_id, child_title, child_url)
+            check_document(child_id, child_title, child_url, child_text)
+
+            # Recurse into children
+            scan_children_recursive(child_id, depth + 1)
+
+    # Phase 1: Fast scan of text fields
+    for col in collections:
+        col_id = col.get("id")
+        col_name = col.get("name", "")
+        yield sse_event("status", {
+            "message": f"Сканирую «{col_name}»..." if col_name else "Сканирую документы..."
+        })
+
+        try:
+            docs_result = yonote.documents_list(collection_id=col_id, limit=100)
+            docs = docs_result.get("data", [])
+        except Exception:
+            continue
+
+        for doc in docs:
+            doc_id = doc.get("id")
+            doc_title = doc.get("title", "")
+            doc_url = doc.get("url", "")
+            doc_text = doc.get("text", "") or ""
+
+            collect_page(doc_id, doc_title, doc_url)
+            check_document(doc_id, doc_title, doc_url, doc_text)
+
+            # Scan children recursively
+            scan_children_recursive(doc_id)
+
+    yield sse_event("status", {
+        "message": f"Быстрый скан: {total_scanned} страниц, найдено {len(found)}"
+    })
+
+    # Phase 2: If nothing found, export each page for full content
+    if not found:
+        # Filter out pages already matched in Phase 1
+        pages_to_export = [p for p in all_pages if p["id"] not in seen_ids]
+        total_export = len(pages_to_export)
+
+        if total_export > 0:
+            yield sse_event("status", {
+                "message": f"Глубокий поиск: экспорт {total_export} страниц..."
+            })
+
+            for idx, page in enumerate(pages_to_export):
+                page_id = page["id"]
+                page_title = page["title"]
+                page_url = page["url"]
+
+                if page_id in seen_ids:
+                    continue
+
+                if (idx + 1) % 5 == 0 or idx == 0:
+                    yield sse_event("status", {
+                        "message": f"Экспорт ({idx + 1}/{total_export})..."
+                    })
+
+                rich_text = _get_rich_text(page_id)
+                if rich_text:
+                    total_scanned += 1
+                    if query_lower in rich_text.lower():
+                        seen_ids.add(page_id)
+                        snippet = make_snippet(rich_text, query_lower, len(query))
+                        found.append({
+                            "id": page_id,
+                            "title": page_title,
+                            "url": yonote.full_url(page_url) if page_url else "",
+                            "snippet": snippet,
+                        })
+
+        yield sse_event("status", {
+            "message": f"Глубокий поиск завершён: {total_scanned} страниц, найдено {len(found)}"
+        })
+
+    # Number the results
+    for i, doc in enumerate(found):
+        doc["number"] = i + 1
+
+    result = {"documents": found, "count": len(found)}
+    if not found:
+        result["note"] = (
+            f"Глубокий поиск по «{query}» просканировал {total_scanned} страниц — "
+            f"совпадений не найдено."
+        )
+
+    yield {"_result": result}
+
+
 def execute_action_streaming(action):
     """Execute an action, yielding SSE events in real-time and returning result.
 
@@ -1102,6 +1287,14 @@ def execute_action_streaming(action):
             else:
                 yield (item, None)
         yield (None, {"tool": tool, "result": result})
+    elif tool == "deep_search":
+        result = None
+        for item in execute_deep_search_streaming(params):
+            if isinstance(item, dict):
+                result = item["_result"]
+            else:
+                yield (item, None)
+        yield (None, {"tool": tool, "result": result})
     else:
         result_data = execute_tool(tool, params, generate_sse=True)
         for evt in result_data["events"]:
@@ -1110,7 +1303,11 @@ def execute_action_streaming(action):
 
 
 def build_response(all_results, response_template):
-    """Build a combined response from tool results."""
+    """Build a combined response from tool results.
+
+    Documents from multiple search/list results are accumulated and deduplicated by ID.
+    This prevents later empty searches from overwriting earlier findings in the agentic loop.
+    """
     # Clean up any leftover placeholders from AI
     message = re.sub(r'\{result\}', '', response_template).strip()
     if not message:
@@ -1118,14 +1315,28 @@ def build_response(all_results, response_template):
 
     combined = {"message": message}
 
+    # Accumulate documents from all results, deduplicating by ID
+    seen_doc_ids = set()
+    all_documents = []
+
     for item in all_results:
         r = item.get("result", {})
         if "documents" in r:
-            combined["documents"] = r["documents"]
+            for doc in r["documents"]:
+                doc_id = doc.get("id")
+                if doc_id and doc_id not in seen_doc_ids:
+                    seen_doc_ids.add(doc_id)
+                    all_documents.append(doc)
         if "collections" in r:
             combined["collections"] = r["collections"]
         if "document" in r:
             combined["document"] = r["document"]
+
+    if all_documents:
+        # Re-number documents sequentially
+        for i, doc in enumerate(all_documents):
+            doc["number"] = i + 1
+        combined["documents"] = all_documents
 
     return combined
 
