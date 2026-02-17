@@ -1,3 +1,4 @@
+import time
 import requests
 
 
@@ -140,6 +141,43 @@ class YonoteClient:
     def documents_viewed(self, limit=25, offset=0):
         """List recently viewed documents."""
         return self._post("documents.viewed", {"limit": limit, "offset": offset})
+
+    # --- Export ---
+
+    def document_export_markdown(self, document_id, timeout=30):
+        """Export document as full markdown (includes tables, images, headings).
+
+        Unlike document_info().text which loses tables/images,
+        this returns complete markdown via async export pipeline.
+        Takes ~1-2 seconds per document.
+        """
+        # Step 1: Start export
+        result = self._post("documents.export", {"id": document_id})
+        fo_id = result["data"]["fileOperation"]["id"]
+
+        # Step 2: Poll until complete
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(0.5)
+            status = self._post("fileOperations.info", {"id": fo_id})
+            state = status.get("data", {}).get("state")
+            if state == "complete":
+                break
+            if state == "error":
+                raise RuntimeError("Export failed")
+        else:
+            raise TimeoutError(f"Export not completed within {timeout}s")
+
+        # Step 3: Get redirect URL and download
+        url = f"{self.base_url}/fileOperations.redirect"
+        resp = requests.post(url, headers=self.headers, json={"id": fo_id},
+                             timeout=15, allow_redirects=False)
+        redirect_url = resp.headers.get("location")
+        if not redirect_url:
+            raise RuntimeError("No redirect URL from export")
+
+        content = requests.get(redirect_url, timeout=15)
+        return content.content.decode("utf-8")
 
     # --- Attachments ---
 

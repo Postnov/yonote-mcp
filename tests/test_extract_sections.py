@@ -1313,7 +1313,8 @@ class TestFetchDocumentImagesFiltered:
         assert len(images) == 0
 
     @patch("app.yonote")
-    def test_untagged_always_included(self, mock_yonote):
+    def test_untagged_excluded_when_heading(self, mock_yonote):
+        """Untagged images (image.png) should be excluded when heading is provided."""
         mock_yonote.attachments_list.return_value = {"data": [
             {"id": "1", "name": "image.png", "contentType": "image/png",
              "redirectUrl": "/r?id=1"},
@@ -1322,11 +1323,11 @@ class TestFetchDocumentImagesFiltered:
 
         from app import fetch_document_images
         images = fetch_document_images("doc-1", heading="Свет")
-        assert len(images) == 1
+        assert len(images) == 0
 
     @patch("app.yonote")
     def test_mixed_tags_filtering(self, mock_yonote):
-        """Only matching and untagged images should be returned."""
+        """Only explicitly tagged matching images should be returned."""
         mock_yonote.attachments_list.return_value = {"data": [
             {"id": "1", "name": "#свет - люстра.png", "contentType": "image/png",
              "redirectUrl": "/r?id=1"},
@@ -1339,10 +1340,10 @@ class TestFetchDocumentImagesFiltered:
 
         from app import fetch_document_images
         images = fetch_document_images("doc-1", heading="Свет")
-        assert len(images) == 2  # #свет + untagged, NOT #цвет
+        assert len(images) == 1  # only #свет, NOT #цвет or untagged
         combined = " ".join(images)
         assert "люстра" in combined
-        assert "photo" in combined
+        assert "photo" not in combined
         assert "палитра" not in combined
 
     @patch("app.yonote")
@@ -1376,7 +1377,7 @@ class TestExtractSectionsWithAttachments:
                      "text": "Свет\n\nСветло\nМягко\n\nЦвет\n\nБелый"}
         }
         mock_yonote.attachments_list.return_value = {"data": [
-            {"id": "img-1", "name": "light.png", "contentType": "image/png",
+            {"id": "img-1", "name": "свет — люстра.png", "contentType": "image/png",
              "redirectUrl": "/api/attachments.redirect?id=img-1"},
         ]}
         mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
@@ -1397,8 +1398,8 @@ class TestExtractSectionsWithAttachments:
         # Section text should be there
         assert "Светло" in created_text
         assert "Мягко" in created_text
-        # Image should be appended
-        assert "![light.png](https://x.yonote.ru/api/attachments.redirect?id=img-1)" in created_text
+        # Tagged image should be appended
+        assert "attachments.redirect?id=img-1" in created_text
         # Other section should NOT be there
         assert "Белый" not in created_text
 
@@ -1444,7 +1445,7 @@ class TestCopySectionWithAttachments:
                      "url": "/doc/guests"}
         }
         mock_yonote.attachments_list.return_value = {"data": [
-            {"id": "img-1", "name": "lamp.jpg", "contentType": "image/jpeg",
+            {"id": "img-1", "name": "свет — лампа.jpg", "contentType": "image/jpeg",
              "redirectUrl": "/api/attachments.redirect?id=img-1"},
         ]}
         mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
@@ -1463,7 +1464,7 @@ class TestCopySectionWithAttachments:
         call_kwargs = mock_yonote.document_create.call_args
         created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
         assert "Светло" in created_text
-        assert "![lamp.jpg](https://x.yonote.ru/api/attachments.redirect?id=img-1)" in created_text
+        assert "attachments.redirect?id=img-1" in created_text
         assert "Бежевый" not in created_text
 
     @patch("app.yonote")
@@ -1490,6 +1491,190 @@ class TestCopySectionWithAttachments:
         call_kwargs = mock_yonote.document_create.call_args
         created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
         assert "![" not in created_text.split("---")[0]  # Before source reference
+
+
+class TestResolveExportUrls:
+    """Tests for _resolve_export_urls() helper."""
+
+    def test_relative_image_url_resolved(self):
+        from app import _resolve_export_urls
+        with patch("app.yonote") as mock_yonote:
+            mock_yonote.full_url.side_effect = lambda url: f"https://remake.yonote.ru{url}"
+            text = '![](/api/attachments.redirect?id=abc123 "aspect=1")'
+            result = _resolve_export_urls(text)
+            assert "https://remake.yonote.ru/api/attachments.redirect?id=abc123" in result
+
+    def test_absolute_urls_unchanged(self):
+        from app import _resolve_export_urls
+        with patch("app.yonote") as mock_yonote:
+            text = '![img](https://example.com/photo.png)'
+            result = _resolve_export_urls(text)
+            assert result == text
+
+    def test_table_and_image_preserved(self):
+        from app import _resolve_export_urls
+        with patch("app.yonote") as mock_yonote:
+            mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+            text = '## Свет\n\n![](/api/attachments.redirect?id=img1)\n\n| 1 | 2 |\n|---|---|\n| a | b |'
+            result = _resolve_export_urls(text)
+            assert "https://x.yonote.ru/api/attachments.redirect?id=img1" in result
+            assert "| 1 | 2 |" in result
+
+
+class TestExportIntegration:
+    """Tests for documents.export integration in extract_sections and copy_section."""
+
+    @patch("app.yonote")
+    def test_extract_uses_export_when_available(self, mock_yonote):
+        """When export returns rich markdown, section should contain table/images."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [{"id": "child-1", "title": "Интерьер"}]},
+            {"data": []},
+        ]
+        # document_info returns lossy text (no table, no image)
+        mock_yonote.document_info.return_value = {
+            "data": {"id": "child-1", "title": "Интерьер",
+                     "text": "Свет\nОписание света\n1\n2\n3\n\nЦвет\nБежевый"}
+        }
+        # export returns rich markdown with table + image
+        mock_yonote.document_export_markdown.return_value = (
+            "## Свет\n\n"
+            "![](/api/attachments.redirect?id=img1)\n\n"
+            "Описание света\n\n"
+            "| 1 | 2 | 3 |\n|----|----|----|---|\n| a | b | c |\n\n"
+            "## Цвет\n\nБежевый"
+        )
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+
+        from app import execute_extract_sections_streaming
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "parent-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        # Table should be present (from export)
+        assert "| 1 | 2 | 3 |" in created_text
+        # Image should be present with absolute URL
+        assert "https://x.yonote.ru/api/attachments.redirect?id=img1" in created_text
+        # Other section should NOT be there
+        assert "Бежевый" not in created_text
+
+    @patch("app.yonote")
+    def test_extract_falls_back_when_export_fails(self, mock_yonote):
+        """When export fails, should fall back to basic text + attachments."""
+        mock_yonote.documents_list.side_effect = [
+            {"data": [{"id": "child-1", "title": "Гости"}]},
+            {"data": []},
+        ]
+        mock_yonote.document_info.return_value = {
+            "data": {"id": "child-1", "title": "Гости",
+                     "text": "Свет\n\nСветло\nМягко\n\nЦвет\n\nБелый"}
+        }
+        mock_yonote.document_export_markdown.side_effect = Exception("export failed")
+        mock_yonote.attachments_list.return_value = {"data": [
+            {"id": "img-1", "name": "свет — лампа.png", "contentType": "image/png",
+             "redirectUrl": "/api/attachments.redirect?id=img-1"},
+        ]}
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+
+        from app import execute_extract_sections_streaming
+        events = list(execute_extract_sections_streaming({
+            "parent_document_id": "parent-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "Светло" in created_text
+        # Fallback: tagged image from attachments
+        assert "лампа" in created_text
+        assert "img-1" in created_text
+
+    @patch("app.yonote")
+    def test_copy_section_uses_export(self, mock_yonote):
+        """copy_section should use export to get rich content."""
+        mock_yonote.document_info.return_value = {
+            "data": {"id": "doc-1", "title": "Интерьер",
+                     "text": "Свет\nОписание\n1\n2\n\nЦвет\nБежевый",
+                     "url": "/doc/interior"}
+        }
+        mock_yonote.document_export_markdown.return_value = (
+            "## Свет\n\n"
+            "Описание\n\n"
+            "| 1 | 2 |\n|---|---|\n| a | b |\n\n"
+            "## Цвет\n\nБежевый"
+        )
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+        mock_yonote.collections_list.return_value = {"data": [{"id": "col-1"}]}
+        mock_yonote.document_create.return_value = {"data": {"id": "r", "title": "t", "url": "/r"}}
+
+        from app import execute_copy_section_streaming
+        events = list(execute_copy_section_streaming({
+            "document_id": "doc-1",
+            "heading": "Свет",
+        }))
+
+        call_kwargs = mock_yonote.document_create.call_args
+        created_text = call_kwargs.kwargs.get("text") or call_kwargs[1].get("text", "")
+        assert "| 1 | 2 |" in created_text
+        assert "Бежевый" not in created_text
+
+
+class TestDocumentExportMarkdown:
+    """Tests for document_export_markdown() in yonote_client.py."""
+
+    @patch("yonote_client.requests")
+    def test_export_success(self, mock_requests):
+        from yonote_client import YonoteClient
+        client = YonoteClient("test-token")
+
+        # Mock the POST calls
+        mock_post = mock_requests.post
+        mock_post.side_effect = [
+            # 1. documents.export
+            MagicMock(status_code=200, json=lambda: {
+                "data": {"fileOperation": {"id": "fo-1"}}
+            }),
+            # 2. fileOperations.info (complete)
+            MagicMock(status_code=200, json=lambda: {
+                "data": {"state": "complete"}
+            }),
+            # 3. fileOperations.redirect
+            MagicMock(status_code=302, headers={"location": "https://storage.example.com/file.md"}),
+        ]
+        # 4. GET download
+        mock_get = mock_requests.get
+        mock_response = MagicMock()
+        mock_response.content = "## Heading\n\nContent with | table |".encode("utf-8")
+        mock_get.return_value = mock_response
+
+        result = client.document_export_markdown("doc-1")
+        assert "## Heading" in result
+        assert "| table |" in result
+
+    @patch("yonote_client.requests")
+    def test_export_error_raises(self, mock_requests):
+        from yonote_client import YonoteClient
+        client = YonoteClient("test-token")
+
+        mock_requests.post.side_effect = [
+            MagicMock(status_code=200, json=lambda: {
+                "data": {"fileOperation": {"id": "fo-1"}}
+            }),
+            MagicMock(status_code=200, json=lambda: {
+                "data": {"state": "error"}
+            }),
+        ]
+
+        import pytest
+        with pytest.raises(RuntimeError, match="Export failed"):
+            client.document_export_markdown("doc-1")
 
 
 class TestDuplicateDocument:

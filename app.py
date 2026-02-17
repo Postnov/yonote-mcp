@@ -579,12 +579,20 @@ def extract_section_from_text(text, heading_name):
 
     # Look for target in Path A
     target_idx = None
+    target_is_markdown = False
     next_heading_idx = None
     for pos, (line_idx, heading_text) in enumerate(headings_a):
         if heading_text.lower() == heading_lower:
             target_idx = line_idx
-            if pos + 1 < len(headings_a):
-                next_heading_idx = headings_a[pos + 1][0]
+            target_is_markdown = lines[line_idx].strip().startswith("#")
+            # Find the next heading boundary
+            for next_pos in range(pos + 1, len(headings_a)):
+                next_line_idx = headings_a[next_pos][0]
+                # If target is a ## heading, only stop at another ## heading
+                if target_is_markdown and not lines[next_line_idx].strip().startswith("#"):
+                    continue
+                next_heading_idx = next_line_idx
+                break
             break
 
     if target_idx is not None:
@@ -677,11 +685,12 @@ def _match_image_to_heading(name, heading):
 def fetch_document_images(document_id, heading=None):
     """Fetch image attachments for a document via attachments.list API.
 
-    If heading is provided, filters images by tag in filename:
+    If heading is provided, only includes images explicitly tagged for that heading:
       - '#свет - фото.png'  → included when heading='Свет'
-      - 'свет - фото.png'   → included when heading='Свет'
-      - 'image.png' (no tag) → included (no tag = could be any section)
-      - '#цвет - палитра.png' → excluded when heading='Свет'
+      - 'свет — тестирование.jpeg' → included when heading='Свет'
+      - 'image.png' (no tag) → EXCLUDED (untagged images are skipped)
+      - '#цвет - палитра.png' → EXCLUDED when heading='Свет'
+    If heading is None, all images are returned (no filtering).
 
     Returns a list of markdown image strings.
     """
@@ -701,16 +710,16 @@ def fetch_document_images(document_id, heading=None):
         if not redirect_url:
             continue
 
-        match_result = _match_image_to_heading(name, heading)
-
-        if match_result == "mismatch":
-            # Image is tagged for a different heading — skip
-            continue
+        if heading:
+            match_result = _match_image_to_heading(name, heading)
+            if match_result != "match":
+                # Only include images explicitly tagged for this heading
+                continue
 
         full_url = yonote.full_url(redirect_url)
         # Clean display name: strip tag prefix for cleaner output
         display_name = name
-        if match_result == "match":
+        if heading:
             clean = re.sub(r'\.\w+$', '', name).strip()
             if clean.startswith("#"):
                 clean = clean[1:]
@@ -765,6 +774,30 @@ def fetch_all_descendants(parent_id, root_title=None, status_callback=None):
     return all_pages
 
 
+def _resolve_export_urls(text):
+    """Convert relative image URLs from export markdown to absolute URLs.
+
+    Export returns: ![](/api/attachments.redirect?id=...)
+    We need:       ![](https://remake.yonote.ru/api/attachments.redirect?id=...)
+    """
+    def replace_url(match):
+        alt = match.group(1)
+        url = match.group(2)
+        full = yonote.full_url(url)
+        return f"![{alt}]({full})"
+
+    return re.sub(r'!\[([^\]]*)\]\((/api/[^)]+)\)', replace_url, text)
+
+
+def _get_rich_text(page_id):
+    """Try to get full markdown via export. Returns None on failure."""
+    try:
+        result = yonote.document_export_markdown(page_id)
+        return result if isinstance(result, str) else None
+    except Exception:
+        return None
+
+
 def execute_extract_sections_streaming(params):
     """Generator for extract_sections that yields SSE events in real-time.
 
@@ -816,19 +849,28 @@ def execute_extract_sections_streaming(params):
             doc = doc_result.get("data", {})
             text = doc.get("text", "") or ""  # Handle None from API
 
-            # Fetch images attached to this document, filtered by heading tag
-            images = fetch_document_images(page_id, heading=heading)
-
             if not text.strip():
                 # API returned empty text — likely a block-based document
                 empty_text_pages.append(page_title)
             else:
+                # Quick check: does this page have the heading?
                 section = extract_section_from_text(text, heading)
                 if section:
-                    section = resolve_attachment_refs(section)  # Fix image URLs for new doc
-                    # Append matching images to the section
-                    if images:
-                        section += "\n\n" + "\n\n".join(images)
+                    # Section found — try to get rich content via export
+                    rich_text = _get_rich_text(page_id)
+                    rich_section = None
+                    if rich_text:
+                        rich_section = extract_section_from_text(rich_text, heading)
+                    if rich_section:
+                        # Export succeeded — tables, images are already inline
+                        section = _resolve_export_urls(rich_section)
+                    else:
+                        # Fallback to basic text + attachments
+                        section = resolve_attachment_refs(section)
+                        images = fetch_document_images(page_id, heading=heading)
+                        if images:
+                            section += "\n\n" + "\n\n".join(images)
+
                     found_sections.append({
                         "page_title": page_title,
                         "path": page.get("path", []),
@@ -937,24 +979,31 @@ def execute_copy_section_streaming(params):
         }}
         return
 
-    # Step 2: Extract the section
+    # Step 2: Extract the section — try rich export first, fallback to basic text
+    yield sse_event("status", {"message": f"Экспортирую полный контент..."})
+    rich_text = _get_rich_text(doc_id)
+
     yield sse_event("status", {"message": f"Ищу секцию «{heading}»..."})
-    section = extract_section_from_text(text, heading)
+    section = None
+    if rich_text:
+        section = extract_section_from_text(rich_text, heading)
+        if section:
+            section = _resolve_export_urls(section)
+
+    if not section:
+        # Fallback to basic text
+        section = extract_section_from_text(text, heading)
+        if section:
+            section = resolve_attachment_refs(section)
+            images = fetch_document_images(doc_id, heading=heading)
+            if images:
+                section += "\n\n" + "\n\n".join(images)
 
     if not section:
         yield {"_result": {
             "message": f"Секция «{heading}» не найдена в документе «{source_title}».",
         }}
         return
-
-    # Resolve attachment refs so images work in the new document
-    section = resolve_attachment_refs(section)
-
-    # Fetch images attached to this document, filtered by heading tag
-    yield sse_event("status", {"message": "Загружаю вложения..."})
-    images = fetch_document_images(doc_id, heading=heading)
-    if images:
-        section += "\n\n" + "\n\n".join(images)
 
     # Step 3: Create new document with the section content
     yield sse_event("status", {"message": f"Создаю страницу «{output_title}»..."})

@@ -1,5 +1,125 @@
 # Changelog — Yonote Manager
 
+## 2026-02-17 — Полный markdown через documents.export (таблицы + картинки)
+
+### Что сделано
+- **`document_export_markdown()`** в `yonote_client.py` — async export pipeline: `documents.export` → `fileOperations.info` (poll) → `fileOperations.redirect` → download. ~1.5s на документ.
+- **Гибридный подход** в `extract_sections` и `copy_section`: обнаружение секций через быстрый `document_info`, а полный контент (таблицы, картинки, форматирование) через export только для страниц с найденной секцией.
+- **`_resolve_export_urls()`** — конвертация относительных URL из export (`/api/attachments.redirect?id=...`) в абсолютные.
+- **Исправлен парсер секций**: `##`-заголовки больше не обрезаются plain-text "заголовками" внутри секции (например, «Описание света» больше не считается границей секции «## Свет»).
+- **Fallback**: если export не удался, работает прежняя логика (text + attachments.list + tag filtering).
+
+### Файлы изменены
+- `yonote_client.py` — `document_export_markdown()`
+- `app.py` — `_resolve_export_urls()`, `_get_rich_text()`, обновлены `execute_extract_sections_streaming` и `execute_copy_section_streaming`, исправлен Path A в парсере
+- `tests/test_extract_sections.py` — 8 новых тестов
+
+### Тесты
+98 тестов, все проходят
+
+---
+
+## 2026-02-17 — Исследование: ProseMirror JSON контент через Outline/Yonote API
+
+### Задача
+Найти способ получения полного блочного контента документов (включая таблицы, изображения, встроенные элементы) через API вместо lossy markdown-поля `text`.
+
+### Ключевые находки
+
+#### 1. Внутренняя структура хранения Outline/Yonote
+- Документы хранятся в БД в **ProseMirror JSON** формате (колонка `content` типа JSONB)
+- Поле `text` (markdown) помечено как **deprecated** в исходном коде Outline
+- Поле `state` (BLOB) содержит Y.js collaborative state для real-time редактирования
+- Markdown является **lossy-экспортом** из JSON — таблицы, изображения и другие блоки теряются
+
+#### 2. Способ получения ProseMirror JSON через API
+**Заголовок `x-api-version: 3`** в HTTP-запросе к `documents.info` меняет формат ответа:
+- При `x-api-version >= 3`: ответ содержит поле `data` с полным ProseMirror JSON деревом
+- При `x-api-version < 3` (по умолчанию): ответ содержит поле `text` с markdown
+- Можно запросить оба формата одновременно через опции `includeData` и `includeText`
+
+**Пример запроса:**
+```python
+headers = {
+    "Authorization": "Bearer TOKEN",
+    "Content-Type": "application/json",
+    "x-api-version": "3"
+}
+response = requests.post(url + "/documents.info", headers=headers, json={"id": doc_id})
+data = response.json()["data"]["data"]  # ProseMirror JSON дерево
+```
+
+#### 3. Структура ProseMirror JSON
+Тип `ProsemirrorData`:
+```typescript
+type ProsemirrorData = {
+  type: string;           // "doc", "paragraph", "heading", "table", "image", etc.
+  content?: ProsemirrorData[];  // дочерние ноды
+  text?: string;          // текстовое содержимое
+  attrs?: JSONObject;     // атрибуты (level для heading, src для image, etc.)
+  marks?: { type: string; attrs?: JSONObject }[];  // форматирование (bold, italic, link)
+};
+```
+
+Корневой документ:
+```json
+{
+  "type": "doc",
+  "content": [
+    {"type": "heading", "attrs": {"level": 1}, "content": [{"type": "text", "text": "Title"}]},
+    {"type": "paragraph", "content": [{"type": "text", "text": "Some text"}]},
+    {"type": "image", "attrs": {"src": "...", "width": 800, "height": 600}},
+    {"type": "table", "content": [
+      {"type": "table_row", "content": [
+        {"type": "table_cell", "content": [{"type": "paragraph", "content": [...]}]},
+        {"type": "table_cell", "content": [...]}
+      ]}
+    ]}
+  ]
+}
+```
+
+#### 4. Дополнительные способы получения JSON
+- **`documents.export`** с `format: "json"` — экспортирует один документ в JSON (но через file operation, асинхронно)
+- **`collections.export_all`** с `format: "json"` — массовый экспорт всей коллекции
+- Оба создают ZIP-файл с `.json` файлами для каждого документа
+
+#### 5. Работа с блоками между документами (ProseMirror)
+- Блоки можно переносить через JSON: извлечь поддерево из `content`, вставить в другой документ
+- Для таблиц: структура `table` -> `table_row` -> `table_cell` -> `paragraph`/`text`
+- Для изображений: нода `image` с `attrs.src` содержит URL вложения
+- Для копирования блоков между документами: сериализовать в JSON, десериализовать через `nodeFromJSON`
+
+#### 6. API версионирование
+- `x-api-version: 2+` — оборачивает ответ в `{document: ...}` вместо плоского объекта
+- `x-api-version: 3+` — добавляет поле `data` с ProseMirror JSON (основная находка)
+
+#### 7. Yonote как форк Outline
+Yonote основан на коммите `15b1069+` Outline (после перехода на TypeScript). API полностью совместим с Outline. Заголовок `x-api-version` должен работать идентично.
+
+### Практические выводы для проекта
+1. **Изображения**: доступны через `data` поле — нода `image` с `attrs.src`
+2. **Таблицы**: полная структура с ячейками и содержимым доступна в JSON
+3. **Решение проблемы**: добавить `x-api-version: 3` в заголовки `_post()` метода `YonoteClient`
+4. **Совместимость**: можно получать и `data` (JSON) и `text` (markdown) одновременно
+
+### Источники
+- GitHub Discussion #7396: What storage format does/will Outline use?
+- DeepWiki: Document Model and API (outline/outline)
+- Outline source: server/presenters/document.ts (условие `x-api-version >= 3`)
+- Outline source: server/models/Document.ts (колонки content JSONB, text TEXT deprecated)
+- Outline source: shared/types.ts (тип ProsemirrorData)
+- Outline API: getoutline.com/developers
+- Outline changelog: JSON Import/Export (Feb 2023)
+
+---
+
+## 2026-02-17 — Компактный таймлайн + исключение untagged картинок
+- **Таймлайн шагов**: свёрнут по умолчанию, показывает только текущий шаг + бейдж с количеством завершённых. Клик раскрывает всю историю.
+- **Untagged картинки исключены**: `image.png` больше не попадает в секции. Только файлы с тегом в имени (`свет — описание.jpeg`) привязываются к секциям.
+
+---
+
 ## 2026-02-17 — Дублирование, копирование секций, картинки с тегированием
 
 ### Что сделано
@@ -9,8 +129,8 @@
   - `#свет - фото освещения.png` → попадёт в секцию «Свет»
   - `свет - описание.png` → тоже попадёт (# необязателен)
   - `#цвет - палитра.png` → НЕ попадёт в секцию «Свет»
-  - `image.png` → попадёт (без тега = любая секция)
-  - `рассвет.png` → попадёт (не тег, а часть слова)
+  - `image.png` → НЕ попадёт (untagged картинки исключаются)
+  - `рассвет.png` → НЕ попадёт (часть слова, не тег)
 - Целое слово: `свет` матчится, `рассвет` — нет
 - Диагностика на реальных данных: 81 страница, 3 картинки через `attachments.list`
 - AI-промпт: 18 инструментов

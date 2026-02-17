@@ -547,14 +547,60 @@ document.addEventListener('DOMContentLoaded', () => {
         let timeline = container.querySelector('.steps-timeline');
         if (!timeline) {
             timeline = document.createElement('div');
-            timeline.className = 'steps-timeline';
+            timeline.className = 'steps-timeline collapsed';
+
+            // Header row: shows current step + toggle
+            const header = document.createElement('div');
+            header.className = 'steps-header';
+            header.innerHTML = `
+                <div class="steps-current"></div>
+                <div class="steps-toggle">
+                    <span class="steps-counter"></span>
+                    <svg class="steps-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+            `;
+            header.addEventListener('click', () => {
+                timeline.classList.toggle('collapsed');
+            });
+            timeline.appendChild(header);
+
+            // History container (hidden when collapsed)
+            const history = document.createElement('div');
+            history.className = 'steps-history';
+            timeline.appendChild(history);
+
             container.appendChild(timeline);
         }
         return timeline;
     }
 
+    function updateTimelineHeader(timeline) {
+        const history = timeline.querySelector('.steps-history');
+        const currentEl = timeline.querySelector('.steps-current');
+        const counterEl = timeline.querySelector('.steps-counter');
+        if (!history || !currentEl || !counterEl) return;
+
+        const allSteps = history.querySelectorAll('.step-item');
+        const lastStep = allSteps[allSteps.length - 1];
+        if (lastStep) {
+            currentEl.innerHTML = lastStep.innerHTML;
+            // Copy class for styling (active/completed/error)
+            currentEl.className = 'steps-current ' + lastStep.className.replace('step-item', '').trim();
+        }
+
+        const completedCount = history.querySelectorAll('.step-item.completed').length;
+        if (completedCount > 0) {
+            counterEl.textContent = completedCount;
+            counterEl.style.display = '';
+        } else {
+            counterEl.style.display = 'none';
+        }
+    }
+
     function completeActiveStep(timeline) {
-        const active = timeline.querySelector('.step-item.active');
+        const history = timeline.querySelector('.steps-history');
+        if (!history) return;
+        const active = history.querySelector('.step-item.active');
         if (active) {
             active.classList.remove('active');
             active.classList.add('completed');
@@ -574,6 +620,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function addStep(timeline, message) {
         completeActiveStep(timeline);
+        const history = timeline.querySelector('.steps-history');
         const step = document.createElement('div');
         step.className = 'step-item active';
         step.dataset.startTime = Date.now().toString();
@@ -582,7 +629,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="step-text">${escapeHtml(message)}</span>
             <span class="step-time"></span>
         `;
-        timeline.appendChild(step);
+        history.appendChild(step);
+        updateTimelineHeader(timeline);
     }
 
     function completeTimeline(container) {
@@ -590,13 +638,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (timeline) {
             completeActiveStep(timeline);
             timeline.classList.add('done');
+            updateTimelineHeader(timeline);
         }
     }
 
     function errorTimeline(container, message) {
         const timeline = container.querySelector('.steps-timeline');
         if (timeline) {
-            const active = timeline.querySelector('.step-item.active');
+            const history = timeline.querySelector('.steps-history');
+            if (!history) return;
+            const active = history.querySelector('.step-item.active');
             if (active) {
                 active.classList.remove('active');
                 active.classList.add('error');
@@ -605,6 +656,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     icon.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
                 }
             }
+            updateTimelineHeader(timeline);
         }
         const errDiv = document.createElement('div');
         errDiv.className = 'error-message';
