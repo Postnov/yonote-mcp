@@ -1687,6 +1687,8 @@ class TestDeepSearch:
             {"id": "col-1", "name": "Проект"},
         ]}
         mock_yonote.documents_list.side_effect = [
+            # Discovery call (documents.list without collectionId)
+            {"data": [{"id": "d1", "collectionId": "col-1"}]},
             # Collection documents
             {"data": [
                 {"id": "d1", "title": "Интерьер", "url": "/doc/d1",
@@ -1714,6 +1716,8 @@ class TestDeepSearch:
             {"id": "col-1", "name": "Проект"},
         ]}
         mock_yonote.documents_list.side_effect = [
+            # Discovery call
+            {"data": [{"id": "parent", "collectionId": "col-1"}]},
             # Collection: 1 top-level doc
             {"data": [
                 {"id": "parent", "title": "Родитель", "url": "/doc/parent",
@@ -1745,6 +1749,8 @@ class TestDeepSearch:
             {"id": "col-1", "name": "Проект"},
         ]}
         mock_yonote.documents_list.side_effect = [
+            # Discovery call
+            {"data": [{"id": "d1", "collectionId": "col-1"}]},
             {"data": [
                 {"id": "d1", "title": "Блочная", "url": "/doc/d1",
                  "text": ""},  # Empty text (ProseMirror block content)
@@ -1772,6 +1778,8 @@ class TestDeepSearch:
             {"id": "col-1", "name": "Проект"},
         ]}
         mock_yonote.documents_list.side_effect = [
+            # Discovery call
+            {"data": [{"id": "parent", "collectionId": "col-1"}]},
             # Collection: parent doc
             {"data": [
                 {"id": "parent", "title": "Интерьер", "url": "/doc/parent",
@@ -1818,6 +1826,8 @@ class TestDeepSearch:
             {"id": "col-1", "name": "Проект"},
         ]}
         mock_yonote.documents_list.side_effect = [
+            # Discovery call
+            {"data": [{"id": "d1", "collectionId": "col-1"}]},
             {"data": [
                 {"id": "d1", "title": "Интерьер", "url": "/doc/d1",
                  "text": "Дерево и камень"},
@@ -1846,6 +1856,8 @@ class TestDeepSearch:
         ]}
         # Same doc appears in both collections (shared)
         mock_yonote.documents_list.side_effect = [
+            # Discovery call
+            {"data": [{"id": "d1", "collectionId": "col-1"}]},
             {"data": [
                 {"id": "d1", "title": "Общая", "url": "/doc/d1",
                  "text": "Керамогранит на полу"},
@@ -1891,12 +1903,76 @@ class TestDeepSearch:
         assert result["count"] == 1
 
     @patch("app.yonote")
+    def test_discovers_hidden_collections(self, mock_yonote):
+        """Should discover and scan collections not returned by collections.list."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-public", "name": "Публичная"},
+        ]}
+        mock_yonote.documents_list.side_effect = [
+            # Discovery: docs from hidden collection (no text match here)
+            {"data": [
+                {"id": "d-hidden", "collectionId": "col-hidden", "text": ""},
+            ]},
+            # Scan col-public: no docs
+            {"data": []},
+            # Scan col-hidden (discovered): 1 doc with query match
+            {"data": [
+                {"id": "d-hidden", "title": "1 этаж, Гости", "url": "/doc/hidden",
+                 "text": "Если камень/керамогранит, то не мраморная текстура"},
+            ]},
+            # No children scan because match already found
+        ]
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "керамогранит"}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 1
+        assert result["documents"][0]["id"] == "d-hidden"
+
+    @patch("app.yonote")
+    def test_discovery_prescan_finds_match_skips_recursion(self, mock_yonote):
+        """Discovery docs are pre-scanned; if match found, recursion is skipped."""
+        mock_yonote.collections_list.return_value = {"data": [
+            {"id": "col-1", "name": "Проект"},
+        ]}
+        mock_yonote.documents_list.side_effect = [
+            # Discovery: doc with text that matches the query
+            {"data": [
+                {"id": "d1", "title": "1 этаж, Гости", "url": "/doc/d1",
+                 "collectionId": "col-1",
+                 "text": "Если камень/керамогранит, то не мраморная текстура"},
+            ]},
+            # Scan col-1: same doc (already seen)
+            {"data": [
+                {"id": "d1", "title": "1 этаж, Гости", "url": "/doc/d1",
+                 "text": "Если камень/керамогранит, то не мраморная текстура"},
+            ]},
+            # No recursive children scan — match already found, recursion skipped
+        ]
+        mock_yonote.full_url.side_effect = lambda url: f"https://x.yonote.ru{url}"
+
+        from app import execute_deep_search_streaming
+        events = list(execute_deep_search_streaming({"query": "керамогранит"}))
+
+        result_items = [e for e in events if isinstance(e, dict)]
+        result = result_items[0]["_result"]
+        assert result["count"] == 1
+        assert result["documents"][0]["id"] == "d1"
+        # No children API calls made (only 2 documents_list calls: discovery + collection)
+        assert mock_yonote.documents_list.call_count == 2
+
+    @patch("app.yonote")
     def test_emits_status_events(self, mock_yonote):
         """Should emit SSE status events during scanning."""
         mock_yonote.collections_list.return_value = {"data": [
             {"id": "col-1", "name": "Мой проект"},
         ]}
         mock_yonote.documents_list.side_effect = [
+            # Discovery call
+            {"data": [{"id": "d1", "collectionId": "col-1"}]},
             {"data": [
                 {"id": "d1", "title": "А", "url": "/a", "text": "Текст"},
             ]},

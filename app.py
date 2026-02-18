@@ -1087,9 +1087,10 @@ def execute_deep_search_streaming(params):
 
     query_lower = query.lower()
 
-    # Step 1: Get collections to scan
+    # Step 1: Get collections to scan (including hidden/personal ones)
     if collection_id:
         collections = [{"id": collection_id, "name": ""}]
+        discovery_docs = []
     else:
         yield sse_event("status", {"message": "Загружаю коллекции..."})
         try:
@@ -1098,6 +1099,20 @@ def execute_deep_search_streaming(params):
         except Exception as e:
             yield {"_result": {"documents": [], "count": 0, "message": f"Ошибка: {e}"}}
             return
+
+        # Discover hidden collections via documents.list (returns docs from ALL collections)
+        # Also pre-scan these documents' text fields — they come for free with the API response
+        known_col_ids = {c.get("id") for c in collections}
+        discovery_docs = []
+        try:
+            discovery_docs = yonote.documents_list(limit=100).get("data", [])
+            for doc in discovery_docs:
+                doc_col_id = doc.get("collectionId")
+                if doc_col_id and doc_col_id not in known_col_ids:
+                    known_col_ids.add(doc_col_id)
+                    collections.append({"id": doc_col_id, "name": "(личное)"})
+        except Exception:
+            pass
 
     found = []
     seen_ids = set()
@@ -1167,7 +1182,20 @@ def execute_deep_search_streaming(params):
             # Recurse into children
             scan_children_recursive(child_id, depth + 1)
 
-    # Phase 1: Fast scan of text fields
+    # Pre-scan: check discovery docs immediately (free — already fetched)
+    for doc in discovery_docs:
+        doc_id = doc.get("id")
+        doc_title = doc.get("title", "")
+        doc_url = doc.get("url", "")
+        doc_text = doc.get("text", "") or ""
+        collect_page(doc_id, doc_title, doc_url)
+        check_document(doc_id, doc_title, doc_url, doc_text)
+
+    # Phase 1: Scan collections
+    # If discovery already found matches, do shallow scan only (top-level, no recursion)
+    # to find additional matches quickly. Full recursive scan only if nothing found yet.
+    discovery_found = len(found)
+
     for col in collections:
         col_id = col.get("id")
         col_name = col.get("name", "")
@@ -1190,8 +1218,9 @@ def execute_deep_search_streaming(params):
             collect_page(doc_id, doc_title, doc_url)
             check_document(doc_id, doc_title, doc_url, doc_text)
 
-            # Scan children recursively
-            scan_children_recursive(doc_id)
+            # Only recurse into children if no matches found yet
+            if not found:
+                scan_children_recursive(doc_id)
 
     yield sse_event("status", {
         "message": f"Быстрый скан: {total_scanned} страниц, найдено {len(found)}"
