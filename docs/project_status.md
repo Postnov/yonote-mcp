@@ -137,9 +137,20 @@
 - [x] Оптимизация: пре-скан discovery-документов (бесплатно), ранний выход без рекурсии при найденных совпадениях
 - [x] 257 тестов, все проходят
 
+### Этап 13: Миграция на JS-фронтенд + PHP-бэкенд ✅
+- [x] PHP-бэкенд: `api/proxy.php` (CORS-прокси), `api/settings.php` (CRUD), `api/db.php` (SQLite), `.htaccess`
+- [x] JS-модули: `event-bus.js`, `config.js`, `yonote-client.js`, `ai-agent.js`, `markdown-processor.js`
+- [x] Агентный цикл: `tool-executor.js` — порт app.py (19 инструментов, pending actions, deep_search, extract_sections, translate, copy_section)
+- [x] UI: `index.html`, `css/style.css`, `js/ui.js`, `js/main.js` — порт с рефакторингом (EventBus вместо SSE, модалка настроек)
+- [x] Тесты: 165 JS-тестов (vitest) — порт всех Python-тестов
+- [x] Очистка: удалены Python-файлы (app.py, yonote_client.py, ai_agent.py, markdown_processor.py, debug_*.py, requirements.txt, templates/, static/, venv/, __pycache__/)
+- [x] Документация обновлена
+
 ## Где остановились
-**Дата:** 2026-02-18
+**Дата:** 2026-02-19
 
-Оптимизирован `deep_search`: discovery-документы из `documents.list()` теперь сканируются сразу (их text приходит бесплатно с API). Если совпадение найдено на этом этапе, рекурсивный обход коллекций пропускается — вместо 100+ секунд поиск занимает ~30с.
+Миграция с Flask (Python) на JS-фронтенд + PHP-бэкенд завершена. Вся бизнес-логика перенесена в браузер (ES-модули), PHP-бэкенд — тонкий слой (CORS-прокси + SQLite). Все 165 JS-тестов проходят. Python-код удалён.
 
-**257 тестов, все проходят.**
+**Следующий шаг:** интеграционное тестирование через `php -S localhost:8000`.
+
+**165 тестов, все проходят.**

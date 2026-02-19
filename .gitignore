@@ -1,2 +1,16 @@
 # Auto Claude data directory
 .auto-claude/
+
+# Dependencies
+node_modules/
+venv/
+
+# SQLite database
+data/app.db
+
+# Environment
+.env
+
+# Python cache
+__pycache__/
+.pytest_cache/

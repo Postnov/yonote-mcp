@@ -1,0 +1,13 @@
+{
+  "name": "yonote-mcp",
+  "version": "2.0.0",
+  "description": "AI-assistant for Yonote document management",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

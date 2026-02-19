@@ -1,5 +1,51 @@
 # Changelog — Yonote Manager
 
+## 2026-02-19 — Миграция на JS-фронтенд + PHP-бэкенд
+
+### Что сделано
+Полная миграция с Flask (Python) на архитектуру JS-фронтенд + PHP-бэкенд. Вся бизнес-логика перенесена в браузер (ES-модули), PHP — тонкий слой (CORS-прокси + SQLite хранилище).
+
+### PHP-бэкенд
+- `api/proxy.php` — CORS-прокси через cURL, белый список доменов (*.yonote.ru, api.deepseek.com), поддержка noRedirect для export
+- `api/settings.php` — CRUD настроек в SQLite (API-ключи на сервере, не в браузере)
+- `api/db.php` — инициализация SQLite (data/app.db), таблицы settings и projects
+- `.htaccess` — защита data/ от прямого доступа
+
+### JS-модули (порт Python → JavaScript)
+- `js/event-bus.js` — EventEmitter (замена Flask SSE)
+- `js/config.js` — клиент для settings API
+- `js/yonote-client.js` — порт yonote_client.py (20+ методов, включая documentExportMarkdown)
+- `js/ai-agent.js` — порт ai_agent.py (системный промпт, DeepSeek, sliding window)
+- `js/markdown-processor.js` — порт markdown_processor.py (эвристический парсер, 15+ regex)
+- `js/tool-executor.js` — порт app.py (агентный цикл, 19 инструментов, pending actions, deep_search, extract_sections, translate, copy_section)
+- `js/ui.js` — рефакторинг static/app.js (EventBus вместо SSE, модалка настроек)
+- `js/main.js` — точка входа (boot → config → modules → UI)
+
+### UI
+- `index.html` — обновлённая страница с ES-модулями
+- `css/style.css` — перенос стилей + модалка настроек API-ключей
+
+### Тесты
+- 165 JS-тестов (vitest), порт всех Python-тестов:
+  - markdown-processor.test.js — 91 тест
+  - tool-executor.test.js — 38 тестов
+  - yonote-client.test.js — 24 теста
+  - ai-agent.test.js — 12 тестов
+
+### Удалено
+- Python: app.py, yonote_client.py, ai_agent.py, markdown_processor.py, requirements.txt
+- Debug: debug_api_response.py, debug_attachments.py, debug_deep_search.py, debug_doc.py, debug_export.py, debug_parser.py, debug_personal_docs.py
+- Директории: templates/, static/, venv/, __pycache__/, .pytest_cache/
+- Python-тесты: tests/test_*.py, tests/__init__.py
+
+### Файлы изменены
+Вся кодовая база заменена. Ключевые новые файлы: api/*.php, js/*.js, index.html, css/style.css, package.json
+
+### Тесты
+165 тестов, все проходят
+
+---
+
 ## 2026-02-18 — deep_search: оптимизация скорости (пре-скан + ранний выход)
 
 ### Проблема

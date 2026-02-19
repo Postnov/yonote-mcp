@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Yonote Manager</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
     <div class="app">
@@ -31,10 +31,15 @@
                     Новый чат
                 </button>
             </div>
-            <nav class="chat-list" id="chatList">
-                <!-- Chat history items will be added here -->
-            </nav>
+            <nav class="chat-list" id="chatList"></nav>
             <div class="sidebar-footer">
+                <button class="btn-settings" id="btnSettings">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                    </svg>
+                    Настройки
+                </button>
                 <div class="help-hint">
                     Powered by DeepSeek AI
                 </div>
@@ -106,6 +111,6 @@
             </div>
         </main>
     </div>
-    <script src="/static/app.js"></script>
+    <script type="module" src="/js/main.js"></script>
 </body>
 </html>

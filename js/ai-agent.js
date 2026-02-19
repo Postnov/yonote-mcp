@@ -1,8 +1,9 @@
-import json
-import requests
+/**
+ * DeepSeek-powered AI agent — port of ai_agent.py.
+ * Sends messages through PHP proxy to DeepSeek API.
+ */
 
-
-SYSTEM_PROMPT = """Ты — AI-ассистент для управления базой знаний Yonote.
+const SYSTEM_PROMPT = `Ты — AI-ассистент для управления базой знаний Yonote.
 У тебя есть доступ к следующим инструментам для работы с Yonote:
 
 1. search(query) — поиск документов по тексту
@@ -149,7 +150,7 @@ SYSTEM_PROMPT = """Ты — AI-ассистент для управления б
 - Переводи/копируй СТРОКА ЗА СТРОКОЙ, сохраняя структуру оригинала
 - Каждый заголовок (## или ###) должен остаться заголовком
 - Каждый элемент списка (- или *) должен остаться элементом списка
-- Каждый перенос строки (\n) должен остаться на месте
+- Каждый перенос строки (\\n) должен остаться на месте
 - **Жирный текст** и *курсив* должны сохраниться
 - Ссылки [текст](url) — переводи только текст в [], URL не трогай
 - Изображения ![alt](url) — копируй КАК ЕСТЬ, включая ![Untitled](<attachment:...>)
@@ -205,75 +206,131 @@ How to configure Important information: First point Second point with link https
 Пример fallback-поиска (search → deep_search):
 Шаг 1: search("керамогранит") → 0 результатов
 Шаг 2: deep_search("керамогранит") → сканирует все документы → находит совпадения
-Ответ: "Нашёл упоминания керамогранита на N страницах:"
-"""
+Ответ: "Нашёл упоминания керамогранита на N страницах:"`;
 
 
-class AIAgent:
-    """DeepSeek-powered AI agent for Yonote management."""
+export class AIAgent {
+    constructor(apiKey, model = 'deepseek-chat') {
+        this.apiKey = apiKey;
+        this.model = model;
+        this.baseUrl = 'https://api.deepseek.com/v1';
+        this.conversationHistory = [];
+    }
 
-    def __init__(self, api_key, model="deepseek-chat"):
-        self.api_key = api_key
-        self.model = model
-        self.base_url = "https://api.deepseek.com/v1"
-        self.conversation_history = []
+    reset() {
+        this.conversationHistory = [];
+    }
 
-    def reset(self):
-        self.conversation_history = []
+    async processMessage(userMessage) {
+        this.conversationHistory.push({ role: 'user', content: userMessage });
 
-    def process_message(self, user_message):
-        """Send user message to DeepSeek and get structured action plan."""
-        self.conversation_history.append({"role": "user", "content": user_message})
+        const messages = [
+            { role: 'system', content: SYSTEM_PROMPT },
+            ...this.conversationHistory.slice(-10),
+        ];
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *self.conversation_history[-10:]  # Keep last 10 messages for context
-        ]
+        const resp = await fetch('/api/proxy.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: `${this.baseUrl}/chat/completions`,
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: {
+                    model: this.model,
+                    messages,
+                    temperature: 0.3,
+                    max_tokens: 8000,
+                },
+            }),
+        });
 
-        response = requests.post(
-            f"{self.base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
-                "messages": messages,
-                "temperature": 0.3,
-                "max_tokens": 8000,
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
-        data = response.json()
+        if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(`DeepSeek API error ${resp.status}: ${text}`);
+        }
 
-        assistant_message = data["choices"][0]["message"]["content"]
-        self.conversation_history.append({"role": "assistant", "content": assistant_message})
+        const data = await resp.json();
+        const assistantMessage = data.choices[0].message.content;
+        this.conversationHistory.push({ role: 'assistant', content: assistantMessage });
 
-        return self._parse_response(assistant_message)
+        return this._parseResponse(assistantMessage);
+    }
 
-    def add_context(self, role, content):
-        """Add execution results to conversation history."""
-        self.conversation_history.append({"role": role, "content": content})
+    addContext(role, content) {
+        this.conversationHistory.push({ role, content });
+    }
 
-    def _parse_response(self, text):
-        """Parse AI response JSON."""
-        # Try to extract JSON from the response
-        text = text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
+    _parseResponse(text) {
+        text = text.trim();
+        if (text.startsWith('```json')) text = text.slice(7);
+        if (text.startsWith('```')) text = text.slice(3);
+        if (text.endsWith('```')) text = text.slice(0, -3);
+        text = text.trim();
 
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # If parsing fails, return as plain text response
+        try {
+            return JSON.parse(text);
+        } catch {
             return {
-                "thinking": "",
-                "actions": [],
-                "response_template": text,
-            }
+                thinking: '',
+                actions: [],
+                response_template: text,
+            };
+        }
+    }
+}
+
+// Export for translation use in tool-executor
+export async function translateTextViaAPI(text, targetLanguage, apiKey, model = 'deepseek-chat') {
+    if (!text || !text.trim()) return text;
+
+    const prompt = `Translate the following text to ${targetLanguage}.
+
+RULES:
+- Translate ONLY the human-readable text
+- Keep ALL markdown syntax exactly as-is: **bold**, *italic*, \`inline code\`, [link text](url)
+- In markdown links [text](url) — translate only the text inside [], keep URL unchanged
+- Keep ALL URLs (https://...) unchanged
+- Keep inline code \`like this\` unchanged
+- Keep special characters and punctuation
+- Do NOT add or remove any markdown formatting
+- Return ONLY the translated text, nothing else
+
+Text to translate:
+${text}`;
+
+    const resp = await fetch('/api/proxy.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url: 'https://api.deepseek.com/v1/chat/completions',
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: {
+                model,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.2,
+                max_tokens: 4000,
+            },
+        }),
+    });
+
+    if (!resp.ok) throw new Error(`Translation API error: ${resp.status}`);
+    const data = await resp.json();
+    return data.choices[0].message.content.trim();
+}
+
+export async function translateHeading(headingLine, targetLanguage, apiKey, model = 'deepseek-chat') {
+    const match = headingLine.match(/^(#{1,6}\s+)(.*)/);
+    if (!match) return headingLine;
+    const prefix = match[1];
+    const text = match[2];
+    const translated = await translateTextViaAPI(text, targetLanguage, apiKey, model);
+    return `${prefix}${translated}`;
+}
