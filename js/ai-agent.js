@@ -24,7 +24,7 @@ const SYSTEM_PROMPT = `Ты — AI-ассистент для управлени�
 16. extract_sections(parent_document_id, heading, output_title?, collection_id?, breadcrumbs?) — ИЗВЛЕЧЕНИЕ СЕКЦИЙ: РЕКУРСИВНО обходит ВСЕ уровни вложенности (дети, внуки, правнуки...), находит секцию под указанным заголовком в каждой странице, собирает в новый документ-отчёт. breadcrumbs=true добавляет путь (хлебные крошки) к каждой секции
 17. duplicate_document(document_id, title?, publish?, recursive?) — СЕРВЕРНОЕ ДУБЛИРОВАНИЕ документа. Создаёт полную копию со ВСЕМ содержимым (текст, картинки, вложения, форматирование). recursive=true копирует и дочерние документы.
 18. copy_section(document_id, heading, output_title?, collection_id?, parent_document_id?) — КОПИРОВАНИЕ СЕКЦИИ: читает документ, извлекает секцию под указанным заголовком (включая текст, картинки, списки), создаёт новую страницу с этим контентом. Добавляет ссылку на источник.
-19. deep_search(query, collection_id?) — ГЛУБОКИЙ ПОИСК по содержимому всех документов. В отличие от search, сканирует ПОЛНЫЙ текст каждого документа (включая вложенные страницы). Медленнее search, но находит контент внутри списков, таблиц и блоков.
+19. deep_search(query, collection_id?, parent_document_id?) — ГЛУБОКИЙ ПОИСК по содержимому документов. В отличие от search, сканирует ПОЛНЫЙ текст каждого документа (включая вложенные страницы). parent_document_id ограничивает поиск подстраницами конкретного документа. Если parent_document_id не передан, но настроена «страница для поиска» — система автоматически ограничит поиск ею.
 
 ПРАВИЛА:
 1. Действия чтения (search, deep_search, list_collections, list_documents, document_info, list_drafts, list_viewed) выполняй СРАЗУ — ставь их в actions.
@@ -210,22 +210,56 @@ How to configure Important information: First point Second point with link https
 
 
 export class AIAgent {
-    constructor(apiKey, model = 'deepseek-chat') {
+    constructor(apiKey, model = 'deepseek-chat', config = null) {
         this.apiKey = apiKey;
         this.model = model;
         this.baseUrl = 'https://api.deepseek.com/v1';
         this.conversationHistory = [];
+        this.config = config;
     }
 
     reset() {
         this.conversationHistory = [];
     }
 
+    _buildSystemPrompt() {
+        let prompt = SYSTEM_PROMPT;
+
+        if (this.config) {
+            const parts = [];
+            const searchPageId = this.config.get('default_search_page_id');
+            const reportsPageId = this.config.get('reports_page_id');
+            const tagsPageId = this.config.get('tags_page_id');
+
+            if (searchPageId) {
+                parts.push(`- СТРАНИЦА ДЛЯ ПОИСКА (parent_document_id): "${searchPageId}".
+  КРИТИЧЕСКИ ВАЖНО: Когда пользователь просит найти данные, собрать информацию или создать отчёт — ищи ТОЛЬКО внутри этой страницы и её подстраниц!
+  - Для extract_sections: передавай parent_document_id="${searchPageId}"
+  - Для deep_search: система АВТОМАТИЧЕСКИ ограничит поиск подстраницами этой страницы. Просто вызывай deep_search(query) без collection_id.
+  - Для list_documents: передавай parent_document_id="${searchPageId}"
+  - НЕ ищи по всем коллекциям! Пользователь указал конкретную страницу — используй её.
+  - Исключение: только если пользователь ЯВНО говорит "ищи везде", "по всем коллекциям", "глобально".`);
+            }
+            if (reportsPageId) {
+                parts.push(`- Страница для отчетов (parent_document_id для отчетов): "${reportsPageId}". Когда создаёшь отчеты через create_document, copy_section или extract_sections — система автоматически создаст документ внутри этой страницы. НЕ передавай reports_page_id вручную в параметрах — система подставит его сама.`);
+            }
+            if (tagsPageId) {
+                parts.push(`- Страница с тегами: "${tagsPageId}". На этой странице хранится список тегов (начинаются с #). Если пользователь спрашивает про теги — загрузи эту страницу через document_info.`);
+            }
+
+            if (parts.length) {
+                prompt += '\n\nНАСТРОЙКИ РАБОЧИХ СТРАНИЦ (установлены пользователем):\n' + parts.join('\n');
+            }
+        }
+
+        return prompt;
+    }
+
     async processMessage(userMessage) {
         this.conversationHistory.push({ role: 'user', content: userMessage });
 
         const messages = [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: this._buildSystemPrompt() },
             ...this.conversationHistory.slice(-10),
         ];
 

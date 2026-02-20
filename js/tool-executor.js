@@ -7,11 +7,32 @@ import { parseMarkdownBlocks, blocksToYonoteMarkdown, extractSectionFromText } f
 import { translateTextViaAPI, translateHeading } from './ai-agent.js';
 
 export class ToolExecutor {
-    constructor(yonote, agent, eventBus) {
+    constructor(yonote, agent, eventBus, config) {
         this.yonote = yonote;
         this.agent = agent;
         this.eventBus = eventBus;
+        this.config = config;
         this.pendingActions = null;
+        this._resolvedIds = new Map();
+    }
+
+    /**
+     * Resolve a document slug/URL-ID to its canonical UUID.
+     * Yonote's documents.list requires UUID for parentDocumentId,
+     * but settings may contain slug-format IDs (e.g. "avgodom-EmozI4aR08").
+     * Caches results to avoid repeated API calls.
+     */
+    async _resolveDocumentId(idOrSlug) {
+        if (!idOrSlug) return null;
+        if (this._resolvedIds.has(idOrSlug)) return this._resolvedIds.get(idOrSlug);
+        try {
+            const result = await this.yonote.documentInfo(idOrSlug);
+            const uuid = result?.data?.id || idOrSlug;
+            this._resolvedIds.set(idOrSlug, uuid);
+            return uuid;
+        } catch {
+            return idOrSlug;
+        }
     }
 
     // --- Main agentic loop ---
@@ -187,8 +208,9 @@ export class ToolExecutor {
         }
 
         if (tool === 'list_documents') {
-            const parentId = params.parent_document_id;
+            let parentId = params.parent_document_id;
             this.eventBus.emit('status', { message: parentId ? 'Загружаю дочерние страницы...' : 'Загружаю документы...' });
+            if (parentId) parentId = await this._resolveDocumentId(parentId);
             const apiResult = await yonote.documentsList(params.collection_id, parentId);
             const documents = apiResult.data || [];
             const docsList = documents.map((d, i) => ({
@@ -425,6 +447,22 @@ export class ToolExecutor {
 
         this.eventBus.emit('status', { message: `Создаю страницу «${outputTitle}»...` });
         let colId = params.collection_id;
+
+        // Use reports_page_id from settings as parent when no explicit parent is given
+        const reportsPageId = this.config ? this.config.get('reports_page_id') : '';
+        let parentForOutput = params.parent_document_id || reportsPageId || null;
+        if (parentForOutput) {
+            // Resolve parent ID and get its collectionId to avoid 403
+            try {
+                const parentDoc = await this.yonote.documentInfo(parentForOutput);
+                const parentData = parentDoc.data || {};
+                parentForOutput = parentData.id || parentForOutput;
+                if (!colId && parentData.collectionId) colId = parentData.collectionId;
+            } catch {
+                parentForOutput = await this._resolveDocumentId(parentForOutput);
+            }
+        }
+
         if (!colId) {
             const colsResult = await this.yonote.collectionsList(1);
             const cols = colsResult.data || [];
@@ -433,7 +471,7 @@ export class ToolExecutor {
 
         const compiledText = section + `\n\n---\n*Источник: [${sourceTitle}](${sourceUrl})*`;
         const createResult = await this.yonote.documentCreate(
-            outputTitle, compiledText, colId, params.parent_document_id || null, true
+            outputTitle, compiledText, colId, parentForOutput, true
         );
         const newDoc = createResult.data || {};
 
@@ -449,21 +487,31 @@ export class ToolExecutor {
 
     async _executeExtractSections(params) {
         const parentDocId = params.parent_document_id;
-        const heading = params.heading;
-        const outputTitle = params.output_title || `Отчет: ${heading}`;
+        // Support both single heading and multiple headings
+        const headings = params.headings || (params.heading ? [params.heading] : []);
+        const isMulti = headings.length > 1;
+        const outputTitle = params.output_title || `Отчет: ${headings.map(h => this._capitalizeFirst(h)).join(', ')}`;
         const breadcrumbs = params.breadcrumbs || false;
+
+        if (!headings.length) {
+            return { tool: 'extract_sections', result: { message: 'Не указаны темы для поиска' } };
+        }
 
         this.eventBus.emit('status', { message: 'Загружаю дочерние страницы...' });
 
+        // Resolve slug ID to UUID (documents.list requires UUID)
+        let resolvedParentId = parentDocId;
         let rootTitle = null;
-        if (breadcrumbs) {
-            try {
-                const rootDoc = await this.yonote.documentInfo(parentDocId);
-                rootTitle = rootDoc?.data?.title;
-            } catch {}
-        }
+        try {
+            const rootDoc = await this.yonote.documentInfo(parentDocId);
+            resolvedParentId = rootDoc?.data?.id || parentDocId;
+            rootTitle = rootDoc?.data?.title;
+            if (resolvedParentId !== parentDocId) {
+                this._resolvedIds.set(parentDocId, resolvedParentId);
+            }
+        } catch {}
 
-        const allPages = await this._fetchAllDescendants(parentDocId, rootTitle);
+        const allPages = await this._fetchAllDescendants(resolvedParentId, breadcrumbs ? rootTitle : null);
         const total = allPages.length;
 
         if (total === 0) {
@@ -472,10 +520,13 @@ export class ToolExecutor {
 
         this.eventBus.emit('status', { message: `Найдено ${total} страниц на всех уровнях вложенности` });
 
-        const foundSections = [];
+        // Track results per heading
+        const foundByHeading = {};
+        for (const h of headings) foundByHeading[h] = [];
+
         const emptyTextPages = [];
-        const sectionNotFoundPages = [];
         const errorPages = [];
+        let pagesWithNoMatch = 0;
 
         for (let i = 0; i < allPages.length; i++) {
             const page = allPages[i];
@@ -491,27 +542,41 @@ export class ToolExecutor {
 
                 if (!text.trim()) {
                     emptyTextPages.push(pageTitle);
-                } else {
-                    let section = extractSectionFromText(text, heading);
-                    if (section) {
-                        // Try rich export
-                        let richText = null;
-                        try { richText = await this.yonote.documentExportMarkdown(pageId); } catch {}
-                        let richSection = null;
-                        if (richText) richSection = extractSectionFromText(richText, heading);
+                    continue;
+                }
 
-                        if (richSection) {
-                            section = this._resolveExportUrls(richSection);
-                        } else {
-                            section = this._resolveAttachmentRefs(section);
-                            const images = await this._fetchDocumentImages(pageId, heading);
-                            if (images.length) section += '\n\n' + images.join('\n\n');
-                        }
+                // Check which headings have sections in quick text
+                const quickMatches = {};
+                for (const h of headings) {
+                    const section = extractSectionFromText(text, h);
+                    if (section) quickMatches[h] = section;
+                }
 
-                        foundSections.push({ page_title: pageTitle, path: page.path || [], content: section });
+                if (!Object.keys(quickMatches).length) {
+                    pagesWithNoMatch++;
+                    continue;
+                }
+
+                // Try rich export once if any heading matched
+                let richText = null;
+                try { richText = await this.yonote.documentExportMarkdown(pageId); } catch {}
+
+                for (const h of headings) {
+                    if (!quickMatches[h]) continue;
+
+                    let section = quickMatches[h];
+                    let richSection = null;
+                    if (richText) richSection = extractSectionFromText(richText, h);
+
+                    if (richSection) {
+                        section = this._resolveExportUrls(richSection);
                     } else {
-                        sectionNotFoundPages.push(pageTitle);
+                        section = this._resolveAttachmentRefs(section);
+                        const images = await this._fetchDocumentImages(pageId, h);
+                        if (images.length) section += '\n\n' + images.join('\n\n');
                     }
+
+                    foundByHeading[h].push({ page_title: pageTitle, path: page.path || [], content: section });
                 }
             } catch (e) {
                 errorPages.push(`${pageTitle}: ${e.message}`);
@@ -525,56 +590,115 @@ export class ToolExecutor {
         if (emptyTextPages.length) {
             this.eventBus.emit('status', { message: `⚠️ Пустой текст (блочный формат?): ${emptyTextPages.slice(0, 10).join(', ')}` });
         }
-        if (sectionNotFoundPages.length) {
-            this.eventBus.emit('status', { message: `Секция «${heading}» не найдена в: ${sectionNotFoundPages.slice(0, 10).join(', ')}` });
+        for (const h of headings) {
+            if (!foundByHeading[h].length) {
+                this.eventBus.emit('status', { message: `Секция «${h}» не найдена ни в одном документе` });
+            }
         }
 
-        if (!foundSections.length) {
+        const totalFound = Object.values(foundByHeading).reduce((sum, arr) => sum + arr.length, 0);
+
+        if (totalFound === 0) {
+            const headingsStr = headings.map(h => `«${h}»`).join(', ');
             const detailParts = [];
-            if (emptyTextPages.length) detailParts.push(`${emptyTextPages.length} страниц с пустым текстом`);
-            if (sectionNotFoundPages.length) detailParts.push(`${sectionNotFoundPages.length} без секции «${heading}»`);
+            if (emptyTextPages.length) detailParts.push(`${emptyTextPages.length} с пустым текстом`);
+            if (pagesWithNoMatch) detailParts.push(`${pagesWithNoMatch} без совпадений`);
             if (errorPages.length) detailParts.push(`${errorPages.length} с ошибками`);
             const detail = detailParts.join('; ');
             return {
                 tool: 'extract_sections',
                 result: {
-                    message: `Секция «${heading}» не найдена ни в одном из ${total} документов${detail ? ` (${detail})` : ''}`,
+                    message: `Секции ${headingsStr} не найдены ни в одном из ${total} документов${detail ? ` (${detail})` : ''}`,
                 },
             };
         }
 
-        this.eventBus.emit('status', { message: `Найдено в ${foundSections.length} из ${total}. Собираю отчёт...` });
+        this.eventBus.emit('status', { message: `Найдено ${totalFound} секций. Собираю отчёт...` });
 
+        // Compile report
         const compiledParts = [];
-        for (const section of foundSections) {
-            compiledParts.push(`## ${section.page_title}`);
-            if (breadcrumbs && section.path.length) {
-                compiledParts.push(`*${section.path.join(' → ')}*`);
+
+        if (isMulti) {
+            // Multi-heading: group by heading with # header and --- separator
+            let firstGroup = true;
+            for (const h of headings) {
+                const sections = foundByHeading[h];
+                if (!sections.length) continue;
+
+                if (!firstGroup) {
+                    compiledParts.push('');
+                    compiledParts.push('---');
+                    compiledParts.push('');
+                }
+                firstGroup = false;
+
+                compiledParts.push(`# ${this._capitalizeFirst(h)}`);
+                compiledParts.push('');
+
+                for (const section of sections) {
+                    compiledParts.push(`## ${section.page_title}`);
+                    if (breadcrumbs && section.path.length) {
+                        compiledParts.push(`*${section.path.join(' → ')}*`);
+                    }
+                    compiledParts.push('');
+                    compiledParts.push(section.content);
+                    compiledParts.push('');
+                    compiledParts.push('');
+                }
             }
-            compiledParts.push('');
-            compiledParts.push(section.content);
-            compiledParts.push('');
-            compiledParts.push('');
+        } else {
+            // Single heading: flat structure (backward compatible)
+            const sections = foundByHeading[headings[0]] || [];
+            for (const section of sections) {
+                compiledParts.push(`## ${section.page_title}`);
+                if (breadcrumbs && section.path.length) {
+                    compiledParts.push(`*${section.path.join(' → ')}*`);
+                }
+                compiledParts.push('');
+                compiledParts.push(section.content);
+                compiledParts.push('');
+                compiledParts.push('');
+            }
         }
+
         const compiledText = compiledParts.join('\n').trim();
 
         this.eventBus.emit('status', { message: `Создаю страницу «${outputTitle}»...` });
         let colId = params.collection_id;
+
+        // Use reports_page_id from settings as parent for report documents
+        const reportsPageId = this.config ? this.config.get('reports_page_id') : '';
+        let outputParentId = params.parent_output_document_id || reportsPageId || null;
+        if (outputParentId) {
+            // Resolve parent ID and get its collectionId to avoid 403
+            try {
+                const parentDoc = await this.yonote.documentInfo(outputParentId);
+                const parentData = parentDoc.data || {};
+                outputParentId = parentData.id || outputParentId;
+                if (!colId && parentData.collectionId) colId = parentData.collectionId;
+            } catch {
+                outputParentId = await this._resolveDocumentId(outputParentId);
+            }
+        }
+
         if (!colId) {
             const colsResult = await this.yonote.collectionsList(1);
             const cols = colsResult.data || [];
             if (cols.length) colId = cols[0].id;
         }
 
-        const createResult = await this.yonote.documentCreate(outputTitle, compiledText, colId, null, true);
+        const createResult = await this.yonote.documentCreate(outputTitle, compiledText, colId, outputParentId, true);
         const newDoc = createResult.data || {};
 
         return {
             tool: 'extract_sections',
             result: {
                 document: { id: newDoc.id, title: newDoc.title, url: this.yonote.fullUrl(newDoc.url || '') },
-                sections_found: foundSections.length,
+                sections_found: totalFound,
                 total_children: total,
+                headings_found: Object.fromEntries(
+                    headings.map(h => [h, foundByHeading[h].length])
+                ),
             },
         };
     }
@@ -582,40 +706,16 @@ export class ToolExecutor {
     async _executeDeepSearch(params) {
         const query = (params.query || '').trim();
         const collectionId = params.collection_id;
+        // Support parent_document_id: from params or from settings
+        const parentDocumentId = params.parent_document_id
+            || (this.config ? this.config.get('default_search_page_id') : '')
+            || '';
 
         if (!query) {
             return { tool: 'deep_search', result: { documents: [], count: 0, message: 'Пустой запрос' } };
         }
 
         const queryLower = query.toLowerCase();
-        let collections;
-        let discoveryDocs = [];
-
-        if (collectionId) {
-            collections = [{ id: collectionId, name: '' }];
-        } else {
-            this.eventBus.emit('status', { message: 'Загружаю коллекции...' });
-            try {
-                const colsResult = await this.yonote.collectionsList(100);
-                collections = colsResult.data || [];
-            } catch (e) {
-                return { tool: 'deep_search', result: { documents: [], count: 0, message: `Ошибка: ${e.message}` } };
-            }
-
-            // Discover hidden collections
-            const knownColIds = new Set(collections.map(c => c.id));
-            try {
-                const discResult = await this.yonote.documentsList(null, null, 100);
-                discoveryDocs = discResult.data || [];
-                for (const doc of discoveryDocs) {
-                    const docColId = doc.collectionId;
-                    if (docColId && !knownColIds.has(docColId)) {
-                        knownColIds.add(docColId);
-                        collections.push({ id: docColId, name: '(личное)' });
-                    }
-                }
-            } catch {}
-        }
 
         const found = [];
         const seenIds = new Set();
@@ -671,75 +771,149 @@ export class ToolExecutor {
             }
         };
 
-        // Pre-scan discovery docs
-        for (const doc of discoveryDocs) {
-            collectPage(doc.id, doc.title || '', doc.url || '');
-            checkDocument(doc.id, doc.title || '', doc.url || '', doc.text || '');
-        }
+        // --- Scoped search: parent_document_id (from params or default_search_page_id) ---
+        if (parentDocumentId && !collectionId) {
+            this.eventBus.emit('status', { message: 'Загружаю дочерние страницы...' });
 
-        // Phase 1: Scan collections
-        for (const col of collections) {
-            const colName = col.name || '';
-            this.eventBus.emit('status', {
-                message: colName ? `Сканирую «${colName}»...` : 'Сканирую документы...',
-            });
+            // Resolve slug ID to UUID (documents.list requires UUID)
+            const resolvedParentId = await this._resolveDocumentId(parentDocumentId);
+            const allDescendants = await this._fetchAllDescendants(resolvedParentId);
+            const total = allDescendants.length;
 
-            let docs;
-            try {
-                const result = await this.yonote.documentsList(col.id, null, 100);
-                docs = result.data || [];
-            } catch { continue; }
+            if (total === 0) {
+                return { tool: 'deep_search', result: { documents: [], count: 0, message: 'Дочерних страниц не найдено' } };
+            }
 
-            for (const doc of docs) {
-                collectPage(doc.id, doc.title || '', doc.url || '');
-                checkDocument(doc.id, doc.title || '', doc.url || '', doc.text || '');
-                if (!found.length) {
-                    await scanChildrenRecursive(doc.id);
+            this.eventBus.emit('status', { message: `Сканирую ${total} страниц...` });
+
+            for (let i = 0; i < allDescendants.length; i++) {
+                const page = allDescendants[i];
+                if ((i + 1) % 10 === 0 || i === 0) {
+                    this.eventBus.emit('status', { message: `Сканирую (${i + 1}/${total})...` });
+                }
+
+                collectPage(page.id, page.title, '');
+
+                try {
+                    const docResult = await this.yonote.documentInfo(page.id);
+                    const doc = docResult.data || {};
+                    const text = doc.text || '';
+                    const docUrl = doc.url || '';
+                    checkDocument(page.id, page.title, docUrl, text);
+                } catch {
+                    // Try export as fallback
+                    try {
+                        const richText = await this.yonote.documentExportMarkdown(page.id);
+                        if (richText) checkDocument(page.id, page.title, '', richText);
+                    } catch {}
                 }
             }
+
+            this.eventBus.emit('status', {
+                message: `Скан завершён: ${totalScanned} страниц, найдено ${found.length}`,
+            });
         }
+        // --- Global search: all collections ---
+        else {
+            let collections;
+            let discoveryDocs = [];
 
-        this.eventBus.emit('status', {
-            message: `Быстрый скан: ${totalScanned} страниц, найдено ${found.length}`,
-        });
+            if (collectionId) {
+                collections = [{ id: collectionId, name: '' }];
+            } else {
+                this.eventBus.emit('status', { message: 'Загружаю коллекции...' });
+                try {
+                    const colsResult = await this.yonote.collectionsList(100);
+                    collections = colsResult.data || [];
+                } catch (e) {
+                    return { tool: 'deep_search', result: { documents: [], count: 0, message: `Ошибка: ${e.message}` } };
+                }
 
-        // Phase 2: Export if nothing found
-        if (!found.length) {
-            const pagesToExport = allPages.filter(p => !seenIds.has(p.id));
-            const totalExport = pagesToExport.length;
-
-            if (totalExport > 0) {
-                this.eventBus.emit('status', { message: `Глубокий поиск: экспорт ${totalExport} страниц...` });
-
-                for (let idx = 0; idx < pagesToExport.length; idx++) {
-                    const page = pagesToExport[idx];
-                    if (seenIds.has(page.id)) continue;
-
-                    if ((idx + 1) % 5 === 0 || idx === 0) {
-                        this.eventBus.emit('status', { message: `Экспорт (${idx + 1}/${totalExport})...` });
+                // Discover hidden collections
+                const knownColIds = new Set(collections.map(c => c.id));
+                try {
+                    const discResult = await this.yonote.documentsList(null, null, 100);
+                    discoveryDocs = discResult.data || [];
+                    for (const doc of discoveryDocs) {
+                        const docColId = doc.collectionId;
+                        if (docColId && !knownColIds.has(docColId)) {
+                            knownColIds.add(docColId);
+                            collections.push({ id: docColId, name: '(личное)' });
+                        }
                     }
+                } catch {}
+            }
 
-                    let richText;
-                    try { richText = await this.yonote.documentExportMarkdown(page.id); } catch { continue; }
-                    if (richText) {
-                        totalScanned++;
-                        if (richText.toLowerCase().includes(queryLower)) {
-                            seenIds.add(page.id);
-                            found.push({
-                                id: page.id,
-                                title: page.title,
-                                url: page.url ? this.yonote.fullUrl(page.url) : '',
-                                snippet: makeSnippet(richText, queryLower, query.length),
-                            });
+            // Pre-scan discovery docs
+            for (const doc of discoveryDocs) {
+                collectPage(doc.id, doc.title || '', doc.url || '');
+                checkDocument(doc.id, doc.title || '', doc.url || '', doc.text || '');
+            }
+
+            // Phase 1: Scan collections
+            for (const col of collections) {
+                const colName = col.name || '';
+                this.eventBus.emit('status', {
+                    message: colName ? `Сканирую «${colName}»...` : 'Сканирую документы...',
+                });
+
+                let docs;
+                try {
+                    const result = await this.yonote.documentsList(col.id, null, 100);
+                    docs = result.data || [];
+                } catch { continue; }
+
+                for (const doc of docs) {
+                    collectPage(doc.id, doc.title || '', doc.url || '');
+                    checkDocument(doc.id, doc.title || '', doc.url || '', doc.text || '');
+                    if (!found.length) {
+                        await scanChildrenRecursive(doc.id);
+                    }
+                }
+            }
+
+            this.eventBus.emit('status', {
+                message: `Быстрый скан: ${totalScanned} страниц, найдено ${found.length}`,
+            });
+
+            // Phase 2: Export if nothing found
+            if (!found.length) {
+                const pagesToExport = allPages.filter(p => !seenIds.has(p.id));
+                const totalExport = pagesToExport.length;
+
+                if (totalExport > 0) {
+                    this.eventBus.emit('status', { message: `Глубокий поиск: экспорт ${totalExport} страниц...` });
+
+                    for (let idx = 0; idx < pagesToExport.length; idx++) {
+                        const page = pagesToExport[idx];
+                        if (seenIds.has(page.id)) continue;
+
+                        if ((idx + 1) % 5 === 0 || idx === 0) {
+                            this.eventBus.emit('status', { message: `Экспорт (${idx + 1}/${totalExport})...` });
+                        }
+
+                        let richText;
+                        try { richText = await this.yonote.documentExportMarkdown(page.id); } catch { continue; }
+                        if (richText) {
+                            totalScanned++;
+                            if (richText.toLowerCase().includes(queryLower)) {
+                                seenIds.add(page.id);
+                                found.push({
+                                    id: page.id,
+                                    title: page.title,
+                                    url: page.url ? this.yonote.fullUrl(page.url) : '',
+                                    snippet: makeSnippet(richText, queryLower, query.length),
+                                });
+                            }
                         }
                     }
                 }
-            }
 
-            this.eventBus.emit('status', {
-                message: `Глубокий поиск завершён: ${totalScanned} страниц, найдено ${found.length}`,
-            });
-        }
+                this.eventBus.emit('status', {
+                    message: `Глубокий поиск завершён: ${totalScanned} страниц, найдено ${found.length}`,
+                });
+            }
+        } // end else (global search)
 
         // Number results
         found.forEach((doc, i) => { doc.number = i + 1; });
@@ -838,6 +1012,11 @@ export class ToolExecutor {
         return 'untagged';
     }
 
+    _capitalizeFirst(str) {
+        if (!str) return '';
+        return str.charAt(0).toUpperCase() + str.slice(1);
+    }
+
     _escapeRegex(str) {
         return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
@@ -907,6 +1086,7 @@ export class ToolExecutor {
         const combined = { message };
         const seenDocIds = new Set();
         const allDocuments = [];
+        let hasAnyDocument = false;
 
         for (const item of allResults) {
             const r = item.result || {};
@@ -920,7 +1100,21 @@ export class ToolExecutor {
                 }
             }
             if (r.collections) combined.collections = r.collections;
-            if (r.document) combined.document = r.document;
+            if (r.document) {
+                combined.document = r.document;
+                hasAnyDocument = true;
+            }
+        }
+
+        // When template is generic "Готово!" and no document was created,
+        // propagate tool-specific messages (errors, warnings) instead of hiding them
+        if (message === 'Готово!' && !hasAnyDocument && !allDocuments.length) {
+            const toolMessages = allResults
+                .map(item => (item.result || {}).message)
+                .filter(Boolean);
+            if (toolMessages.length) {
+                combined.message = toolMessages.join('\n');
+            }
         }
 
         if (allDocuments.length) {

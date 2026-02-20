@@ -3,114 +3,83 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Yonote Manager</title>
+    <title>Yonote Reports</title>
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-    <div class="app">
-        <!-- Sidebar -->
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <div class="logo">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                        <polyline points="14 2 14 8 20 8"/>
-                        <line x1="16" y1="13" x2="8" y2="13"/>
-                        <line x1="16" y1="17" x2="8" y2="17"/>
-                        <polyline points="10 9 9 9 8 9"/>
-                    </svg>
-                    <span>Yonote Manager</span>
-                </div>
+    <header class="app-header">
+        <div class="header-left">
+            <button id="btnBack" class="header-back" style="display:none" title="К проектам">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"/>
+                </svg>
+                <span>Проекты</span>
+            </button>
+            <div class="header-brand" id="headerBrand">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                </svg>
+                <span>Yonote Reports</span>
             </div>
-            <div class="sidebar-actions">
-                <button class="btn-new-chat" id="btnNewChat">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"/>
-                        <line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                    Новый чат
-                </button>
-            </div>
-            <nav class="chat-list" id="chatList"></nav>
-            <div class="sidebar-footer">
-                <button class="btn-settings" id="btnSettings">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-                    </svg>
-                    Настройки
-                </button>
-                <div class="help-hint">
-                    Powered by DeepSeek AI
-                </div>
-            </div>
-        </aside>
+        </div>
+        <button id="btnSettings" class="header-settings" title="Настройки">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+        </button>
+    </header>
 
-        <!-- Main Chat Area -->
-        <main class="chat-area">
-            <div class="chat-messages" id="chatMessages">
-                <div class="welcome-screen" id="welcomeScreen">
-                    <div class="welcome-icon">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                            <polyline points="14 2 14 8 20 8"/>
-                            <line x1="16" y1="13" x2="8" y2="13"/>
-                            <line x1="16" y1="17" x2="8" y2="17"/>
-                        </svg>
-                    </div>
-                    <h1>Yonote Manager</h1>
-                    <p class="welcome-subtitle">AI-ассистент для управления документами Yonote. Просто напишите, что нужно сделать.</p>
-                    <div class="quick-actions">
-                        <button class="quick-action" data-command="Покажи все коллекции">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                            </svg>
-                            Коллекции
-                        </button>
-                        <button class="quick-action" data-command="Покажи последние документы">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                                <polyline points="14 2 14 8 20 8"/>
-                            </svg>
-                            Документы
-                        </button>
-                        <button class="quick-action" data-command="Найди документы про ">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="11" cy="11" r="8"/>
-                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                            </svg>
-                            Поиск
-                        </button>
-                        <button class="quick-action" data-command="Создай новую страницу ">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="12" y1="5" x2="12" y2="19"/>
-                                <line x1="5" y1="12" x2="19" y2="12"/>
-                            </svg>
-                            Создать
-                        </button>
+    <!-- Projects view -->
+    <div id="viewProjects" class="view">
+        <div class="projects-page">
+            <div class="projects-header">
+                <h1>Проекты</h1>
+                <p class="projects-subtitle">Выберите проект или создайте новый</p>
+            </div>
+            <div id="projectsGrid" class="projects-grid"></div>
+        </div>
+    </div>
+
+    <!-- Report view -->
+    <div id="viewReport" class="view" style="display:none">
+        <div class="app-layout">
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <span class="sidebar-title">История</span>
+                </div>
+                <div class="history-list" id="historyList"></div>
+            </aside>
+
+            <main class="main-content">
+                <div class="hero-section">
+                    <h1>Создать отчёт</h1>
+                    <p class="hero-subtitle">Выберите темы для сбора данных</p>
+                </div>
+
+                <div id="tagsSection" class="tags-section">
+                    <div id="tagsGrid" class="tags-grid">
+                        <div class="tags-loading">
+                            <div class="tag-skeleton"></div>
+                            <div class="tag-skeleton"></div>
+                            <div class="tag-skeleton"></div>
+                            <div class="tag-skeleton"></div>
+                            <div class="tag-skeleton"></div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="chat-input-area">
-                <form id="chatForm" class="chat-form">
-                    <div class="input-wrapper">
-                        <textarea
-                            id="chatInput"
-                            placeholder="Напишите, что нужно сделать в Yonote..."
-                            rows="1"
-                            autofocus
-                        ></textarea>
-                        <button type="submit" class="btn-send" id="btnSend">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="22" y1="2" x2="11" y2="13"/>
-                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                            </svg>
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </main>
+
+                <div id="actionSection" class="action-section" style="display:none">
+                    <button id="btnCreateReport" class="btn-create-report"></button>
+                </div>
+
+                <div id="progressSection" class="progress-section"></div>
+
+                <div id="resultSection" class="result-section"></div>
+            </main>
+        </div>
     </div>
+
     <script type="module" src="/js/main.js"></script>
 </body>
 </html>

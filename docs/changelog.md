@@ -1,5 +1,219 @@
 # Changelog — Yonote Manager
 
+## 2026-02-20 — Система проектов
+
+### Что сделано
+Глобальные настройки page ID заменены системой проектов. Каждый проект — отдельное рабочее пространство со своими страницами (теги, поиск, отчёты). Пользователь заходит → видит список проектов → выбирает → работает в контексте проекта.
+
+### Архитектура
+- Глобальные настройки (API-токены) остаются в `settings` таблице
+- Проектные настройки (`tags_page_id`, `default_search_page_id`, `reports_page_id`) хранятся в `projects.data` JSON
+- `Config.get()` проверяет проект первым для page-ID ключей → ToolExecutor работает без изменений
+
+### Backend: `api/projects.php`
+- GET (список) + GET?id (один проект) + POST (создание) + PUT?id (обновление) + DELETE?id (удаление)
+- Валидация: `data` может содержать только три допустимых ключа
+- `json_decode` при отдаче — клиент получает объект, не строку
+- `api/settings.php` — убраны `tags_page_id`, `default_search_page_id`, `reports_page_id` из глобальных настроек
+
+### Frontend: SPA-роутер
+- `js/router.js` — hash-based роутер: `#/projects` (список), `#/project/:id` (отчёты)
+- `js/project-api.js` — API-клиент: `list()`, `get()`, `create()`, `update()`, `delete()`
+- `js/config.js` — `setProject()`, `clearProject()`, `getProject()`, `get()` с приоритетом проекта
+- `js/main.js` — полная перестройка boot с роутером, ToolExecutor создаётся при входе в проект
+
+### UI
+- Страница проектов: grid карточек с названием, счётчиком настроек, датой. Кнопки редактирования/удаления по hover
+- Карточка «+ Новый проект» с dashed border
+- Модалка создания/редактирования: название + 3 поля страниц
+- Модалка подтверждения удаления
+- Кнопка «Проекты» в header для возврата к списку
+- Настройки (⚙) — только глобальные поля (API-токены)
+- История отчётов скоупирована по ID проекта: `yonote_report_history_${projectId}`
+
+### Файлы изменены
+- `api/projects.php` — полный CRUD с валидацией
+- `api/settings.php` — убраны page ID ключи
+- `js/config.js` — project context
+- `js/project-api.js` — новый файл
+- `js/router.js` — новый файл
+- `js/ui.js` — `renderProjectsView`, `showProjectModal`, `showDeleteConfirm`, `initReportView` (рефакторинг), скоуп истории
+- `js/main.js` — роутер + routes
+- `index.html` — два контейнера видов + back button
+- `css/style.css` — стили проектов, карточек, модалок, view switching
+
+### Тесты
+- `tests/projects.test.js` — 28 новых тестов: Config project context, ProjectApi mock, Router matching, UI history key
+- 268 тестов, все проходят
+
+---
+
+## 2026-02-20 — Создание отчёта по нескольким темам
+
+### Что сделано
+Пользователь может выбрать несколько тегов и создать один общий отчёт. Система сканирует страницы один раз и собирает секции по всем выбранным темам.
+
+### UI: мульти-выбор тегов
+- Клик по тегу toggle'ит выбор (можно выбрать несколько одновременно)
+- Кнопка адаптируется: 1 тег → «Создать отчёт по «Свет»», 2-3 → «по «Свет», «Цвет»», 4+ → «по N темам»
+- Подзаголовок изменён: «Выберите темы для сбора данных»
+- Результат показывает per-heading breakdown: «12 из 20 страниц (Свет: 8, Цвет: 4)»
+- История: метка «#Свет, #Цвет, #Полы»
+
+### Бэкенд: `_executeExtractSections` с массивом тем
+- Новый параметр `headings` (массив) — заменяет `heading` (строка) при мульти-выборе
+- Сканирование страниц один раз: для каждой страницы проверяются все темы
+- Rich export делается один раз на страницу, если хотя бы одна тема найдена
+- Формат отчёта для нескольких тем: `# Свет` → `## Страница` → контент → `---` → `# Цвет` → ...
+- Для одной темы — плоский формат (backward compatible, без `# Тема`)
+- Результат включает `headings_found: { Свет: 8, Цвет: 4 }`
+- `formatReportTitle` поддерживает массив: «Отчет: Свет, Цвет — дата»
+
+### Файлы изменены
+- `js/tool-executor.js` — `_executeExtractSections`: `headings[]`, per-heading tracking, grouped compilation
+- `js/ui.js` — `_selectedTags` (Set), `selectTag` (toggle), `updateActionButton`, `startReport` (без аргумента), `formatReportTitle` (массив), `showReportResult` (breakdown)
+- `index.html` — подзаголовок «Выберите темы для сбора данных»
+- `tests/report-ui.test.js` — 6 новых тестов: formatReportTitle с массивом, multi-tag flow, history label
+- `tests/settings.test.js` — 5 новых тестов: multi-heading scan, flat format, error cases, backward compat
+
+### Тесты
+239 тестов, все проходят
+
+---
+
+## 2026-02-20 — Хлебные крошки, дата в названии, история отчётов
+
+### Что сделано
+Улучшения интерфейса создания отчётов: хлебные крошки всегда включены, дата/время добавляется в название отчёта, появился sidebar с историей созданных отчётов.
+
+### Хлебные крошки
+- `breadcrumbs: true` всегда передаётся в `extract_sections` — каждая секция в отчёте содержит путь (*Авгодом → Интерьер → 1 этаж, Гости*)
+
+### Дата в названии отчёта
+- Название страницы в Yonote: «Отчет: Свет — 23 февраля 2026. 16:12»
+- `formatReportDate(date)` — форматирование даты на русском (день месяц год. ЧЧ:ММ)
+- `formatReportTitle(tagName, date)` — полный заголовок с тегом и датой
+
+### История отчётов (sidebar)
+- Sidebar слева с заголовком «История»
+- Каждый созданный отчёт автоматически добавляется в историю (localStorage)
+- Отображается: метка (#Тег), дата создания
+- Клик по элементу → открытие в Yonote (новая вкладка)
+- Переименование: кнопка ✏ → inline input → Enter/Escape/blur
+- Пустое состояние: «Созданные отчёты будут отображаться здесь»
+
+### Файлы изменены
+- `index.html` — добавлен sidebar (`<aside class="sidebar">`) с `<div class="history-list">`, обёрнуто в `<div class="app-layout">`
+- `css/style.css` — новые стили: `.app-layout`, `.sidebar`, `.history-list`, `.history-item`, `.history-rename-input`, `.history-empty`; `.main-content` изменён на `flex: 1`
+- `js/ui.js` — новые функции: `formatReportDate`, `formatReportTitle`, `loadHistory`, `saveHistory`, `addToHistory`, `renameHistoryItem`, `renderHistory`, `startRename`; `startReport` обновлён: `breadcrumbs: true`, дата в `output_title`, запись в историю
+- `tests/report-ui.test.js` — 7 новых тестов: `formatReportDate` (5), `formatReportTitle` (2)
+
+### Тесты
+228 тестов, все проходят
+
+---
+
+## 2026-02-20 — Замена чата на инструмент создания отчётов по тегам
+
+### Что сделано
+Чат-интерфейс с AI заменён на специализированный инструмент создания отчётов. Теперь пользователь выбирает тег из списка, и система автоматически сканирует все дочерние страницы, находит секции с этим заголовком, собирает контент и создаёт отчёт в Yonote.
+
+### Новый дизайн
+- Тёмный header-бар с логотипом и кнопкой настроек
+- Центральная колонка 640px, три зоны: теги → действие → результат
+- Tag chips с hover/selected состояниями, border-radius 20px
+- Skeleton shimmer при загрузке тегов
+- Gradient кнопка «Создать отчёт по тегу»
+- Карточка успеха с зелёным left-border и ссылкой на Yonote
+- Карточка ошибки с красным left-border
+- Timeline прогресса (переиспользован из предыдущей версии)
+
+### Файлы изменены
+- `index.html` — полная переделка: убран sidebar, chat, добавлены header, hero, tags grid, action, progress, result
+- `css/style.css` — новые стили: app-header, main-content, tag-chip, tags-loading, btn-create-report, result-card-success/error, btn-open-report. Сохранены: timeline, settings modal, :root variables
+- `js/ui.js` — убраны все chat-функции. Новые: parseTags, loadAndRenderTags, renderTags, selectTag, startReport, showReportResult, showReportError. Сохранены: escapeHtml, extractDocumentId, timeline functions, showSettingsModal
+- `js/main.js` — убран AIAgent, ToolExecutor с agent=null, передача yonote в initUI
+- `tests/report-ui.test.js` — 20 новых тестов: parseTags (11 тестов), startReport flow (5 тестов), extractDocumentId (4 теста)
+
+### Удалено
+- Sidebar и список чатов
+- Все chat-функции (chatHistory, loadChats, saveChats, sendMessage, addUserMessage, addAssistantMessage, renderChatList, etc.)
+- Confirmation flow (renderConfirm, confirmAction)
+- Quick actions и welcome screen
+- AIAgent из main.js boot
+
+### Фикс 403 при создании отчёта
+- **Проблема**: `documentCreate` получал 403 Authorization error, потому что `collectionId` бралась из первой публичной коллекции (`collectionsList`), а `reports_page_id` находился в личной/скрытой коллекции. Yonote требует совпадения `collectionId` и коллекции родительского документа.
+- **Решение**: при наличии parent документа (reports_page_id) — получаем его `collectionId` через `documentInfo` и используем при создании. Применено в `_executeExtractSections` и `_executeCopySection`.
+
+### Тесты
+221 тест, все проходят
+
+---
+
+## 2026-02-20 — Фикс slug ID → UUID + пропагация ошибок
+
+### Проблема
+Slug ID из настроек (например `avgodom-EmozI4aR08`) не работал с API `documents.list(parentDocumentId)` — этот endpoint требует UUID. Из-за этого `extract_sections` и scoped `deep_search` не находили дочерних страниц и возвращали "Готово!" вместо ошибки.
+
+### Что исправлено
+- `_resolveDocumentId(idOrSlug)` — новый хелпер с кэшированием: резолвит slug → UUID через `documentInfo`
+- `deep_search`: резолвит `default_search_page_id` и `parent_document_id` перед поиском потомков
+- `extract_sections`: всегда резолвит `parent_document_id` в UUID (убрано условие `if (breadcrumbs)`)
+- `copy_section` и `extract_sections`: резолвят `reports_page_id` перед `documentCreate`
+- `list_documents`: резолвит `parent_document_id` при вызове
+- `_buildResponse`: когда шаблон "Готово!" и документ не создан — показывает ошибки инструментов (раньше они терялись)
+- 199 тестов (было 185), все проходят
+
+---
+
+## 2026-02-20 — Настройки рабочих страниц + автоматическое ограничение поиска
+
+### Что сделано
+Добавлены три новых настройки для указания рабочих страниц Yonote. Теперь пользователь может задать:
+1. **Страница с тегами** — страница со списком тегов (каждый начинается с #)
+2. **Страница для поиска** — дефолтная страница, в рамках которой искать данные
+3. **Страница для отчетов** — родительская страница, внутри которой создаются отчеты
+
+### Автоматическое ограничение поиска (scoped search)
+- `deep_search` теперь поддерживает `parent_document_id` — ограничивает поиск подстраницами конкретного документа
+- Когда `default_search_page_id` настроен и `collection_id` не указан, deep_search автоматически сканирует только потомков этой страницы (через `_fetchAllDescendants`), а не все коллекции
+- Для каждой страницы сначала пробует `documentInfo` (быстро), при ошибке — `documentExportMarkdown` (fallback)
+- AI промпт усилен: при наличии «страницы для поиска» AI не сканирует другие коллекции
+
+### PHP-бэкенд
+- `api/settings.php` — добавлены 3 новых ключа: `tags_page_id`, `default_search_page_id`, `reports_page_id`
+
+### UI
+- Модалка настроек расширена секцией «Рабочие страницы» с визуальным разделителем
+- Каждое поле имеет подсказку (hint) с описанием назначения
+- `extractDocumentId()` — парсинг Yonote URL в document ID (UUID или slug-ID)
+- Модалка увеличена (520px), добавлен скролл для body
+
+### Логика
+- `ToolExecutor` принимает `config`, использует `reports_page_id` как parent при создании отчетов (extract_sections, copy_section)
+- `deep_search` автоматически ограничивает поиск `default_search_page_id`
+- `AIAgent._buildSystemPrompt()` динамически добавляет настройки в системный промпт
+- `main.js` — config прокинут в AIAgent и ToolExecutor
+
+### CSS
+- `.settings-section-divider`, `.settings-section-title`, `.settings-section-subtitle`, `.settings-field-hint`
+
+### Тесты
+- `tests/settings.test.js` — 20 новых тестов: reports_page_id, scoped deep_search, _buildSystemPrompt, extractDocumentId
+- Итого: 185 тестов, все проходят
+
+### Файлы изменены
+- `api/settings.php` — новые ключи
+- `js/ui.js` — модалка + extractDocumentId
+- `js/tool-executor.js` — config + reports_page_id + scoped deep_search
+- `js/ai-agent.js` — config + _buildSystemPrompt + deep_search parent_document_id
+- `js/main.js` — передача config
+- `css/style.css` — стили секций
+- `tests/settings.test.js` — новый файл тестов
+
+---
+
 ## 2026-02-19 — Миграция на JS-фронтенд + PHP-бэкенд
 
 ### Что сделано

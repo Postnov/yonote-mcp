@@ -1,14 +1,17 @@
 <?php
 /**
- * Projects API — CRUD scaffold for future multi-project support.
+ * Projects API — CRUD for multi-project support.
  *
  * GET  /api/projects.php          → list all projects
+ * GET  /api/projects.php?id=X     → get single project
  * POST /api/projects.php          → create project {name, data?}
+ * PUT  /api/projects.php?id=X     → update project {name?, data?}
+ * DELETE /api/projects.php?id=X   → delete project
  */
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -20,21 +23,128 @@ require_once __DIR__ . '/db.php';
 
 $db = getDB();
 
+$allowedDataKeys = ['tags_page_id', 'default_search_page_id', 'reports_page_id'];
+
+function decodeProjectRow($row) {
+    if (isset($row['data']) && is_string($row['data'])) {
+        $decoded = json_decode($row['data'], true);
+        $row['data'] = is_array($decoded) ? $decoded : new stdClass();
+    }
+    return $row;
+}
+
+function validateDataFields($data, $allowedKeys) {
+    if (!is_array($data)) return new stdClass();
+    $filtered = [];
+    foreach ($data as $key => $value) {
+        if (in_array($key, $allowedKeys)) {
+            $filtered[$key] = $value;
+        }
+    }
+    return $filtered ?: new stdClass();
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $stmt = $db->query('SELECT id, name, data, created_at FROM projects ORDER BY created_at DESC');
-    echo json_encode($stmt->fetchAll(), JSON_UNESCAPED_UNICODE);
+    $id = $_GET['id'] ?? null;
+
+    if ($id) {
+        $stmt = $db->prepare('SELECT id, name, data, created_at FROM projects WHERE id = :id');
+        $stmt->execute([':id' => $id]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Project not found']);
+            exit;
+        }
+        echo json_encode(decodeProjectRow($row), JSON_UNESCAPED_UNICODE);
+    } else {
+        $stmt = $db->query('SELECT id, name, data, created_at FROM projects ORDER BY created_at DESC');
+        $rows = $stmt->fetchAll();
+        $result = array_map('decodeProjectRow', $rows);
+        echo json_encode($result, JSON_UNESCAPED_UNICODE);
+    }
     exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $input = json_decode(file_get_contents('php://input'), true);
     $name = $input['name'] ?? 'Без названия';
-    $data = json_encode($input['data'] ?? new stdClass(), JSON_UNESCAPED_UNICODE);
+    $data = validateDataFields($input['data'] ?? [], $allowedDataKeys);
+    $dataJson = json_encode($data, JSON_UNESCAPED_UNICODE);
 
     $stmt = $db->prepare('INSERT INTO projects (name, data) VALUES (:name, :data)');
-    $stmt->execute([':name' => $name, ':data' => $data]);
+    $stmt->execute([':name' => $name, ':data' => $dataJson]);
 
-    echo json_encode(['id' => $db->lastInsertId(), 'name' => $name], JSON_UNESCAPED_UNICODE);
+    $newId = $db->lastInsertId();
+    $stmt = $db->prepare('SELECT id, name, data, created_at FROM projects WHERE id = :id');
+    $stmt->execute([':id' => $newId]);
+    $row = $stmt->fetch();
+
+    echo json_encode(decodeProjectRow($row), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'PUT') {
+    $id = $_GET['id'] ?? null;
+    if (!$id) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Missing id parameter']);
+        exit;
+    }
+
+    $stmt = $db->prepare('SELECT id, name, data, created_at FROM projects WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $existing = $stmt->fetch();
+    if (!$existing) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Project not found']);
+        exit;
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true);
+    $name = $input['name'] ?? $existing['name'];
+
+    $existingData = json_decode($existing['data'], true) ?: [];
+    if (isset($input['data']) && is_array($input['data'])) {
+        foreach ($input['data'] as $key => $value) {
+            if (in_array($key, $allowedDataKeys)) {
+                $existingData[$key] = $value;
+            }
+        }
+    }
+    $dataJson = json_encode($existingData ?: new stdClass(), JSON_UNESCAPED_UNICODE);
+
+    $stmt = $db->prepare('UPDATE projects SET name = :name, data = :data WHERE id = :id');
+    $stmt->execute([':name' => $name, ':data' => $dataJson, ':id' => $id]);
+
+    $stmt = $db->prepare('SELECT id, name, data, created_at FROM projects WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch();
+
+    echo json_encode(decodeProjectRow($row), JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
+    $id = $_GET['id'] ?? null;
+    if (!$id) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Missing id parameter']);
+        exit;
+    }
+
+    $stmt = $db->prepare('SELECT id FROM projects WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    if (!$stmt->fetch()) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Project not found']);
+        exit;
+    }
+
+    $stmt = $db->prepare('DELETE FROM projects WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+
+    echo json_encode(['ok' => true]);
     exit;
 }
 

@@ -146,11 +146,75 @@
 - [x] Очистка: удалены Python-файлы (app.py, yonote_client.py, ai_agent.py, markdown_processor.py, debug_*.py, requirements.txt, templates/, static/, venv/, __pycache__/)
 - [x] Документация обновлена
 
+### Этап 14: Настройки рабочих страниц ✅
+- [x] Три новых поля в настройках: «Страница с тегами», «Страница для поиска», «Страница для отчетов»
+- [x] PHP-бэкенд: 3 новых ключа (tags_page_id, default_search_page_id, reports_page_id)
+- [x] UI: секция «Рабочие страницы» в модалке настроек с подсказками
+- [x] Парсинг URL → ID документа (extractDocumentId)
+- [x] ToolExecutor: отчеты (extract_sections, copy_section) автоматически создаются внутри reports_page_id
+- [x] AI Agent: системный промпт динамически включает настройки рабочих страниц
+- [x] CSS: стили для секций и подсказок в модалке
+- [x] deep_search автоматически ограничивает поиск подстраницами default_search_page_id
+- [x] AI промпт усилен: при наличии «страницы для поиска» не ищет по всем коллекциям
+- [x] 185 тестов, все проходят
+
+### Этап 14.1: Фикс slug ID → UUID + пропагация ошибок ✅
+- [x] `_resolveDocumentId(idOrSlug)` — резолвит slug ID (например `avgodom-EmozI4aR08`) в UUID через `documentInfo`, с кэшированием
+- [x] deep_search: резолвит `default_search_page_id` и `parent_document_id` перед `_fetchAllDescendants`
+- [x] extract_sections: всегда резолвит `parent_document_id` в UUID (раньше slug не работал с `documents.list`)
+- [x] copy_section и extract_sections: резолвят `reports_page_id` перед `documentCreate`
+- [x] list_documents: резолвит `parent_document_id` для корректной работы с slug ID
+- [x] `_buildResponse`: когда шаблон "Готово!" и документ не создан — показывает ошибки инструментов вместо скрытого "Готово!"
+- [x] 199 тестов, все проходят
+
+### Этап 15: Замена чата на инструмент создания отчётов ✅
+- [x] Полная переделка `index.html` — тёмный header, hero-секция, теги, кнопка действия, прогресс, результат
+- [x] Новый дизайн `css/style.css` — минималистичный, центральная колонка 640px, tag chips, gradient кнопка, skeleton loading, result cards
+- [x] Переписан `js/ui.js` — parseTags, loadAndRenderTags, selectTag, startReport, showReportResult/Error, timeline сохранён
+- [x] Упрощён `js/main.js` — убран AIAgent, ToolExecutor с agent=null
+- [x] Новые тесты `tests/report-ui.test.js` — 20 тестов (parseTags, startReport flow, extractDocumentId)
+- [x] Фикс 403 при создании отчёта: collectionId берётся из родительского документа (reports_page), а не из первой коллекции
+- [x] 221 тест, все проходят
+
+### Этап 15.1: Хлебные крошки, дата в названии, история отчётов ✅
+- [x] `breadcrumbs: true` всегда передаётся в `extract_sections`
+- [x] Дата и время в названии отчёта в Yonote: «Отчет: Свет — 23 февраля 2026. 16:12»
+- [x] `formatReportDate(date)` и `formatReportTitle(tagName, date)` — форматирование даты на русском
+- [x] Sidebar с историей созданных отчётов (localStorage)
+- [x] Клик по элементу истории → открыть в Yonote
+- [x] Переименование элементов истории (inline edit)
+- [x] 228 тестов, все проходят
+
+### Этап 15.2: Создание отчёта по нескольким темам ✅
+- [x] Мульти-выбор тегов: клик toggle'ит тег (можно выбрать несколько)
+- [x] Кнопка адаптируется: 1 тег → «по «Свет»», 2-3 → перечисление, 4+ → счётчик
+- [x] `_executeExtractSections` поддерживает `headings[]` — сканирует страницы один раз, ищет секции по всем темам
+- [x] Формат: группировка по темам с `# Тема` → `## Страница` → контент, разделитель `---`
+- [x] Backward compat: `heading` (строка) работает как раньше
+- [x] Результат: `headings_found` с per-heading breakdown в UI
+- [x] Название: «Отчет: Свет, Цвет, Полы — дата»
+- [x] История: метка «#Свет, #Цвет, #Полы»
+- [x] 239 тестов, все проходят
+
+### Этап 16: Система проектов ✅
+- [x] PHP-бэкенд: `api/projects.php` — полный CRUD (GET list, GET single, POST create, PUT update, DELETE)
+- [x] Валидация данных: только `tags_page_id`, `default_search_page_id`, `reports_page_id` в data
+- [x] `js/config.js` — project context: `setProject()`, `clearProject()`, `getProject()`, `get()` с приоритетом проектных настроек
+- [x] `js/project-api.js` — API-клиент: `list()`, `get()`, `create()`, `update()`, `delete()`
+- [x] `js/router.js` — hash-based SPA роутер: `#/projects`, `#/project/:id`, редирект по умолчанию
+- [x] `index.html` — два контейнера видов (viewProjects, viewReport), кнопка «Проекты» в header
+- [x] CSS — стили: projects grid, project cards, модалки создания/удаления, кнопка назад, view switching
+- [x] `js/ui.js` — `renderProjectsView()`, `showProjectModal()`, `showDeleteConfirm()`, `initReportView()` (рефакторинг initUI), история скоупирована по проекту
+- [x] `js/main.js` — роутер с двумя маршрутами, ToolExecutor создаётся при входе в проект
+- [x] Настройки (⚙) — только глобальные (API-токены), page ID переехали в проект
+- [x] `api/settings.php` — убраны page ID из глобальных настроек
+- [x] 268 тестов, все проходят
+
 ## Где остановились
-**Дата:** 2026-02-19
+**Дата:** 2026-02-20
 
-Миграция с Flask (Python) на JS-фронтенд + PHP-бэкенд завершена. Вся бизнес-логика перенесена в браузер (ES-модули), PHP-бэкенд — тонкий слой (CORS-прокси + SQLite). Все 165 JS-тестов проходят. Python-код удалён.
+Реализована система проектов (пункт 2 плана разработки). Каждый проект — отдельное рабочее пространство со своими page ID. Hash-роутер для SPA навигации. Глобальные настройки (токены) отделены от проектных (страницы).
 
-**Следующий шаг:** интеграционное тестирование через `php -S localhost:8000`.
+**Следующий шаг:** ручная проверка через `php -S localhost:8000`, далее — система доступов (пункт 3 плана).
 
-**165 тестов, все проходят.**
+**268 тестов, все проходят.**

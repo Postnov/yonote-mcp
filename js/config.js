@@ -1,11 +1,13 @@
 /**
  * Settings manager — loads/saves API keys via PHP settings API.
  * Keys are stored server-side in SQLite, not in localStorage.
+ * Supports project context: page-ID keys resolve from active project first.
  */
 export class Config {
     constructor() {
         this._settings = {};
         this._loaded = false;
+        this._project = null;
     }
 
     async load() {
@@ -21,6 +23,11 @@ export class Config {
     }
 
     get(key) {
+        const projectKeys = ['tags_page_id', 'default_search_page_id', 'reports_page_id'];
+        if (this._project && projectKeys.includes(key)) {
+            const val = (this._project.data || {})[key];
+            if (val) return val;
+        }
         return this._settings[key] || '';
     }
 
@@ -42,5 +49,17 @@ export class Config {
 
     getAll() {
         return { ...this._settings };
+    }
+
+    setProject(project) {
+        this._project = project;
+    }
+
+    clearProject() {
+        this._project = null;
+    }
+
+    getProject() {
+        return this._project;
     }
 }
