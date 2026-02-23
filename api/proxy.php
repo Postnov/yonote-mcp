@@ -22,6 +22,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth_middleware.php';
+requireAuth();
+
 $input = json_decode(file_get_contents('php://input'), true);
 if (!$input || !isset($input['url'])) {
     http_response_code(400);

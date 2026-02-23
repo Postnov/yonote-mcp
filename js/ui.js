@@ -81,7 +81,7 @@ export function getOrCreateTimeline(container) {
     let timeline = container.querySelector('.steps-timeline');
     if (!timeline) {
         timeline = document.createElement('div');
-        timeline.className = 'steps-timeline';
+        timeline.className = 'steps-timeline collapsed';
         const header = document.createElement('div');
         header.className = 'steps-header';
         header.innerHTML = `
@@ -362,6 +362,12 @@ function renameHistoryItem(id, newLabel) {
     }
 }
 
+function deleteHistoryItem(id) {
+    _history = _history.filter(h => h.id !== id);
+    saveHistory();
+    renderHistory();
+}
+
 function renderHistory() {
     if (!historyList) return;
     historyList.innerHTML = '';
@@ -393,12 +399,18 @@ function renderHistory() {
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                     </svg>
                 </button>
+                <button class="history-action-btn history-delete-btn" title="Удалить">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                </button>
             </div>
         `;
 
         // Click on item → open in Yonote
         item.addEventListener('click', (e) => {
-            if (e.target.closest('.history-rename-btn') || e.target.closest('.history-rename-input')) return;
+            if (e.target.closest('.history-rename-btn') || e.target.closest('.history-delete-btn') || e.target.closest('.history-rename-input')) return;
             if (entry.url) window.open(entry.url, '_blank');
         });
 
@@ -407,6 +419,13 @@ function renderHistory() {
         renameBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             startRename(entry.id, item);
+        });
+
+        // Delete button
+        const deleteBtn = item.querySelector('.history-delete-btn');
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteHistoryItem(entry.id);
         });
 
         historyList.appendChild(item);
@@ -662,13 +681,21 @@ function formatProjectDate(dateStr) {
     return `${d.getDate()} ${MONTHS_RU_SHORT[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-function countProjectSettings(data) {
-    if (!data) return 0;
-    let count = 0;
-    if (data.tags_page_id) count++;
-    if (data.default_search_page_id) count++;
-    if (data.reports_page_id) count++;
-    return count;
+function countProjectReports(projectId) {
+    try {
+        const key = getHistoryKey(projectId);
+        const raw = window.localStorage.getItem(key);
+        if (!raw) return 0;
+        const data = JSON.parse(raw);
+        return Array.isArray(data) ? data.length : 0;
+    } catch { return 0; }
+}
+
+function formatReportCount(count) {
+    if (count === 0) return 'Нет отчётов';
+    if (count === 1) return '1 отчёт';
+    if (count >= 2 && count <= 4) return `${count} отчёта`;
+    return `${count} отчётов`;
 }
 
 export function renderProjectsView(projects, { onCreate, onEdit, onDelete, onOpen }) {
@@ -679,7 +706,7 @@ export function renderProjectsView(projects, { onCreate, onEdit, onDelete, onOpe
     for (const project of projects) {
         const card = document.createElement('div');
         card.className = 'project-card';
-        const settingsCount = countProjectSettings(project.data);
+        const reportCount = countProjectReports(project.id);
         const dateStr = formatProjectDate(project.created_at);
 
         card.innerHTML = `
@@ -704,7 +731,7 @@ export function renderProjectsView(projects, { onCreate, onEdit, onDelete, onOpe
                 ${escapeHtml(project.name)}
             </div>
             <div class="project-card-meta">
-                ${settingsCount ? `${settingsCount} ${settingsCount === 1 ? 'настройка' : settingsCount < 5 ? 'настройки' : 'настроек'}` : 'Нет настроек'}
+                ${formatReportCount(reportCount)}
                 ${dateStr ? ` &middot; ${dateStr}` : ''}
             </div>
         `;
@@ -851,7 +878,7 @@ export function showDeleteConfirm(projectName, onConfirm) {
 
 // --- Main init ---
 
-export function initReportView(executor, eventBus, config, yonote, projectId) {
+export function initReportView(executor, eventBus, config, yonote, projectId, project) {
     _executor = executor;
     _eventBus = eventBus;
     _config = config;
@@ -881,6 +908,27 @@ export function initReportView(executor, eventBus, config, yonote, projectId) {
         </div>
     `;
 
+    // Update page title and reports link
+    const heroH1 = document.querySelector('.hero-section h1');
+    const heroSubtitle = document.querySelector('.hero-subtitle');
+    if (heroH1 && project) {
+        heroH1.textContent = project.name;
+    }
+    if (heroSubtitle) {
+        heroSubtitle.textContent = 'Выберите темы для сбора данных';
+        heroSubtitle.removeAttribute('data-link');
+        const reportsPageId = config.get('reports_page_id');
+        if (reportsPageId && yonote) {
+            yonote.documentInfo(reportsPageId).then(result => {
+                const rawUrl = result?.data?.url;
+                if (rawUrl && heroSubtitle) {
+                    const url = yonote.fullUrl(rawUrl);
+                    heroSubtitle.innerHTML = `<a href="${escapeHtml(url)}" target="_blank" class="hero-reports-link">Страница отчётов →</a>`;
+                }
+            }).catch(() => {});
+        }
+    }
+
     // Load history
     _history = loadHistory();
     renderHistory();
@@ -901,3 +949,485 @@ export function initReportView(executor, eventBus, config, yonote, projectId) {
 
 // Keep backward compat alias
 export const initUI = initReportView;
+
+// --- Login View ---
+
+export function showLoginView(onLogin) {
+    const container = document.getElementById('viewLogin');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="auth-page">
+            <div class="auth-card">
+                <div class="auth-brand">
+                    <img src="/images/mereal-logo.svg" alt="Mereal" class="auth-logo">
+                </div>
+                <div class="auth-form">
+                    <div class="auth-field">
+                        <label for="loginEmail">Email</label>
+                        <input type="email" id="loginEmail" placeholder="admin@example.com" autocomplete="email">
+                    </div>
+                    <div class="auth-field">
+                        <label for="loginPassword">Пароль</label>
+                        <input type="password" id="loginPassword" placeholder="Введите пароль" autocomplete="current-password">
+                    </div>
+                    <div class="auth-error" id="loginError"></div>
+                    <button class="btn-auth" id="btnLogin">Войти</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const emailInput = document.getElementById('loginEmail');
+    const passInput = document.getElementById('loginPassword');
+    const errorEl = document.getElementById('loginError');
+    const btnLogin = document.getElementById('btnLogin');
+
+    const doLogin = async () => {
+        const email = emailInput.value.trim();
+        const password = passInput.value;
+        errorEl.classList.remove('visible');
+
+        if (!email || !password) {
+            errorEl.textContent = 'Введите email и пароль';
+            errorEl.classList.add('visible');
+            return;
+        }
+
+        btnLogin.disabled = true;
+        btnLogin.textContent = 'Вход...';
+
+        try {
+            const result = await onLogin(email, password);
+            return result;
+        } catch (e) {
+            errorEl.textContent = e.message || 'Неверный email или пароль';
+            errorEl.classList.add('visible');
+            btnLogin.disabled = false;
+            btnLogin.textContent = 'Войти';
+        }
+    };
+
+    btnLogin.addEventListener('click', doLogin);
+    passInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') doLogin();
+    });
+
+    setTimeout(() => emailInput?.focus(), 100);
+}
+
+// --- Setup View (first admin creation) ---
+
+export function showSetupView(onSetup) {
+    const container = document.getElementById('viewSetup');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="auth-page">
+            <div class="auth-card">
+                <div class="auth-brand">
+                    <img src="/images/mereal-logo.svg" alt="Mereal" class="auth-logo">
+                </div>
+                <h2 class="auth-title">Первый запуск</h2>
+                <p class="auth-subtitle">Создайте аккаунт администратора</p>
+                <div class="auth-form">
+                    <div class="auth-field">
+                        <label for="setupName">Имя</label>
+                        <input type="text" id="setupName" placeholder="Ваше имя">
+                    </div>
+                    <div class="auth-field">
+                        <label for="setupEmail">Email</label>
+                        <input type="email" id="setupEmail" placeholder="admin@example.com" autocomplete="email">
+                    </div>
+                    <div class="auth-field">
+                        <label for="setupPassword">Пароль</label>
+                        <input type="password" id="setupPassword" placeholder="Минимум 6 символов" autocomplete="new-password">
+                    </div>
+                    <div class="auth-error" id="setupError"></div>
+                    <button class="btn-auth" id="btnSetup">Создать аккаунт</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const nameInput = document.getElementById('setupName');
+    const emailInput = document.getElementById('setupEmail');
+    const passInput = document.getElementById('setupPassword');
+    const errorEl = document.getElementById('setupError');
+    const btnSetup = document.getElementById('btnSetup');
+
+    const doSetup = async () => {
+        const name = nameInput.value.trim();
+        const email = emailInput.value.trim();
+        const password = passInput.value;
+        errorEl.classList.remove('visible');
+
+        if (!email || !password) {
+            errorEl.textContent = 'Введите email и пароль';
+            errorEl.classList.add('visible');
+            return;
+        }
+
+        if (password.length < 6) {
+            errorEl.textContent = 'Пароль должен быть минимум 6 символов';
+            errorEl.classList.add('visible');
+            return;
+        }
+
+        btnSetup.disabled = true;
+        btnSetup.textContent = 'Создание...';
+
+        try {
+            await onSetup(email, password, name);
+        } catch (e) {
+            errorEl.textContent = e.message || 'Ошибка создания аккаунта';
+            errorEl.classList.add('visible');
+            btnSetup.disabled = false;
+            btnSetup.textContent = 'Создать аккаунт';
+        }
+    };
+
+    btnSetup.addEventListener('click', doSetup);
+    passInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') doSetup();
+    });
+
+    setTimeout(() => nameInput?.focus(), 100);
+}
+
+// --- Admin View (user management) ---
+
+export function renderAdminView(users, projects, { onAdd, onEdit, onDelete }) {
+    const container = document.getElementById('viewAdmin');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="admin-page">
+            <div class="admin-header">
+                <h1>Управление доступами</h1>
+                <button class="btn-add-user" id="btnAddUser">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Добавить
+                </button>
+            </div>
+            <div class="users-table" id="usersTable"></div>
+        </div>
+    `;
+
+    const table = document.getElementById('usersTable');
+
+    for (const user of users) {
+        const initials = (user.name || user.email).charAt(0).toUpperCase();
+        const projectCount = (user.project_ids || []).length;
+
+        let projectText;
+        if (user.role === 'admin') {
+            projectText = 'Все проекты';
+        } else if (projectCount === 0) {
+            projectText = 'Нет доступа';
+        } else {
+            projectText = `${projectCount} ${projectCount === 1 ? 'проект' : projectCount < 5 ? 'проекта' : 'проектов'}`;
+        }
+
+        const row = document.createElement('div');
+        row.className = 'user-row';
+        row.innerHTML = `
+            <div class="user-avatar">${escapeHtml(initials)}</div>
+            <div class="user-info">
+                <div class="user-name">${escapeHtml(user.name || user.email)}</div>
+                <div class="user-email">${escapeHtml(user.email)}</div>
+            </div>
+            <span class="user-badge ${user.role}">${user.role === 'admin' ? 'Администратор' : 'Пользователь'}</span>
+            <span class="user-projects-count">${escapeHtml(projectText)}</span>
+            ${user.role !== 'admin' ? `
+                <div class="user-actions">
+                    <button class="project-action-btn edit-user-btn" title="Редактировать">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    </button>
+                    <button class="project-action-btn danger delete-user-btn" title="Удалить">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
+                </div>
+            ` : ''}
+        `;
+
+        const editBtn = row.querySelector('.edit-user-btn');
+        if (editBtn) editBtn.addEventListener('click', (e) => { e.stopPropagation(); onEdit(user); });
+
+        const deleteBtn = row.querySelector('.delete-user-btn');
+        if (deleteBtn) deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); onDelete(user); });
+
+        if (user.role !== 'admin') {
+            row.style.cursor = 'pointer';
+            row.addEventListener('click', (e) => {
+                if (e.target.closest('.user-actions')) return;
+                onEdit(user);
+            });
+        }
+
+        table.appendChild(row);
+    }
+
+    document.getElementById('btnAddUser').addEventListener('click', () => onAdd());
+}
+
+// --- User Modal (create/edit with project checkboxes) ---
+
+export function showUserModal(user, projects, onSave) {
+    const existing = document.getElementById('userModal');
+    if (existing) existing.remove();
+
+    const isEdit = !!user;
+
+    const modal = document.createElement('div');
+    modal.id = 'userModal';
+    modal.className = 'project-modal-overlay';
+
+    let projectCheckboxes = '';
+    for (const p of projects) {
+        const checked = isEdit && (user.project_ids || []).includes(p.id) ? 'checked' : '';
+        projectCheckboxes += `
+            <div class="user-modal-project-item">
+                <input type="checkbox" id="userProject_${p.id}" value="${p.id}" ${checked}>
+                <label for="userProject_${p.id}">${escapeHtml(p.name)}</label>
+            </div>
+        `;
+    }
+
+    modal.innerHTML = `
+        <div class="project-modal">
+            <div class="project-modal-header">
+                <h2>${isEdit ? 'Редактировать пользователя' : 'Добавить пользователя'}</h2>
+                <p>${isEdit ? 'Измените данные и доступы' : 'Создайте аккаунт и назначьте проекты'}</p>
+            </div>
+            <div class="project-modal-body">
+                <div class="settings-field">
+                    <label for="userName">Имя</label>
+                    <input type="text" id="userModalName" placeholder="Иван Иванов" value="${escapeHtml(user?.name || '')}">
+                </div>
+                <div class="settings-field">
+                    <label for="userEmail">Email</label>
+                    <input type="email" id="userModalEmail" placeholder="ivan@example.com" value="${escapeHtml(user?.email || '')}">
+                </div>
+                <div class="settings-field">
+                    <label for="userPassword">Пароль${isEdit ? ' (оставьте пустым, чтобы не менять)' : ''}</label>
+                    <input type="password" id="userModalPassword" placeholder="${isEdit ? 'Новый пароль' : 'Минимум 6 символов'}">
+                </div>
+                ${projects.length ? `
+                    <div class="user-modal-projects">
+                        <div class="user-modal-projects-title">Доступ к проектам</div>
+                        ${projectCheckboxes}
+                    </div>
+                ` : ''}
+            </div>
+            <div class="project-modal-footer">
+                <button class="btn-secondary" id="btnUserCancel">Отмена</button>
+                <button class="btn-primary" id="btnUserSave">Сохранить</button>
+            </div>
+            <div class="settings-modal-error" id="userModalError" style="display:none"></div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById('btnUserCancel').addEventListener('click', () => modal.remove());
+
+    document.getElementById('btnUserSave').addEventListener('click', async () => {
+        const name = document.getElementById('userModalName').value.trim();
+        const email = document.getElementById('userModalEmail').value.trim();
+        const password = document.getElementById('userModalPassword').value;
+        const errorEl = document.getElementById('userModalError');
+
+        if (!email) {
+            errorEl.textContent = 'Введите email';
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        if (!isEdit && !password) {
+            errorEl.textContent = 'Введите пароль';
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        if (password && password.length < 6) {
+            errorEl.textContent = 'Пароль должен быть минимум 6 символов';
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        // Collect checked project IDs
+        const projectIds = [];
+        for (const p of projects) {
+            const cb = document.getElementById(`userProject_${p.id}`);
+            if (cb && cb.checked) projectIds.push(p.id);
+        }
+
+        const data = { name, email, project_ids: projectIds };
+        if (password) data.password = password;
+
+        try {
+            modal.remove();
+            await onSave(data);
+        } catch (e) {
+            // Re-show modal with error if it was removed
+            errorEl.textContent = e.message || 'Ошибка сохранения';
+            errorEl.style.display = 'block';
+        }
+    });
+
+    setTimeout(() => document.getElementById('userModalName')?.focus(), 100);
+}
+
+// --- Change Password Modal ---
+
+export function showChangePasswordModal(onSave) {
+    const existing = document.getElementById('changePasswordModal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'changePasswordModal';
+    modal.className = 'project-modal-overlay';
+    modal.innerHTML = `
+        <div class="project-modal">
+            <div class="project-modal-header">
+                <h2>Сменить пароль</h2>
+            </div>
+            <div class="project-modal-body">
+                <div class="settings-field">
+                    <label for="cpCurrentPassword">Текущий пароль</label>
+                    <input type="password" id="cpCurrentPassword" placeholder="Введите текущий пароль">
+                </div>
+                <div class="settings-field">
+                    <label for="cpNewPassword">Новый пароль</label>
+                    <input type="password" id="cpNewPassword" placeholder="Минимум 6 символов">
+                </div>
+            </div>
+            <div class="project-modal-footer">
+                <button class="btn-secondary" id="btnCpCancel">Отмена</button>
+                <button class="btn-primary" id="btnCpSave">Сменить</button>
+            </div>
+            <div class="settings-modal-error" id="cpError" style="display:none"></div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById('btnCpCancel').addEventListener('click', () => modal.remove());
+
+    document.getElementById('btnCpSave').addEventListener('click', async () => {
+        const current = document.getElementById('cpCurrentPassword').value;
+        const newPass = document.getElementById('cpNewPassword').value;
+        const errorEl = document.getElementById('cpError');
+
+        if (!current || !newPass) {
+            errorEl.textContent = 'Заполните оба поля';
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        if (newPass.length < 6) {
+            errorEl.textContent = 'Новый пароль должен быть минимум 6 символов';
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        try {
+            await onSave(current, newPass);
+            modal.remove();
+        } catch (e) {
+            errorEl.textContent = e.message || 'Ошибка смены пароля';
+            errorEl.style.display = 'block';
+        }
+    });
+
+    setTimeout(() => document.getElementById('cpCurrentPassword')?.focus(), 100);
+}
+
+// --- Projects View with role-based buttons ---
+
+export function renderProjectsViewWithRole(projects, userRole, { onCreate, onEdit, onDelete, onOpen }) {
+    const grid = document.getElementById('projectsGrid');
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    const isAdmin = userRole === 'admin';
+
+    for (const project of projects) {
+        const card = document.createElement('div');
+        card.className = 'project-card';
+        const reportCount = countProjectReports(project.id);
+        const dateStr = formatProjectDate(project.created_at);
+
+        card.innerHTML = `
+            ${isAdmin ? `
+                <div class="project-card-actions">
+                    <button class="project-action-btn edit-btn" title="Редактировать">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    </button>
+                    <button class="project-action-btn danger delete-btn" title="Удалить">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
+                </div>
+            ` : ''}
+            <div class="project-card-name">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+                ${escapeHtml(project.name)}
+            </div>
+            <div class="project-card-meta">
+                ${formatReportCount(reportCount)}
+                ${dateStr ? ` &middot; ${dateStr}` : ''}
+            </div>
+        `;
+
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.edit-btn') || e.target.closest('.delete-btn')) return;
+            onOpen(project);
+        });
+
+        if (isAdmin) {
+            card.querySelector('.edit-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                onEdit(project);
+            });
+            card.querySelector('.delete-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                onDelete(project);
+            });
+        }
+
+        grid.appendChild(card);
+    }
+
+    // Add "new project" card (admin only)
+    if (isAdmin) {
+        const newCard = document.createElement('div');
+        newCard.className = 'project-card project-card-new';
+        newCard.innerHTML = `
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            <span>Новый проект</span>
+        `;
+        newCard.addEventListener('click', () => onCreate());
+        grid.appendChild(newCard);
+    }
+}

@@ -1,5 +1,112 @@
 # Changelog — Yonote Manager
 
+## 2026-02-23 — Мелкие UX-правки
+
+### Что сделано
+
+**Клик по строке пользователя открывает редактирование**
+- В `renderAdminView` добавлен click-хендлер на `user-row` для не-admin пользователей
+- Клик на любую часть строки (аватар, имя, email, бейдж, счётчик) → `onEdit(user)`
+- Кнопки edit/delete используют `stopPropagation`, чтобы не дублировать вызов
+- `cursor: pointer` для кликабельных строк
+
+**Hover карточки проекта — синий градиент вместо чёрного**
+- `.project-card:hover`: `background: linear-gradient(135deg, #606c88, #3f4c6b)`, `border-color: transparent`
+- Согласован со стилем всех primary-кнопок в приложении
+
+**Отступ сверху на body**
+- `body { padding-top: 24px }` — небольшой воздух между хедером и контентом
+
+---
+
+## 2026-02-23 — Доработки UX страницы проекта
+
+### Что сделано
+
+**Удаление отчётов из истории**
+- Кнопка удаления (корзина) рядом с переименованием в каждом элементе истории
+- При hover кнопка краснеет (`var(--error-dim)`)
+- `deleteHistoryItem(id)` — фильтрует `_history`, сохраняет в localStorage, перерисовывает
+
+**Заголовок страницы = название проекта**
+- `initReportView` принимает `project` как новый параметр
+- `h1` в hero-секции заменяется на `project.name`
+- `main.js` передаёт `project` из `_projectApi.get()` в `initReportView`
+
+**Ссылка на страницу отчётов**
+- Под заголовком асинхронно загружается ссылка через `yonote.documentInfo(reports_page_id)`
+- URL строится через `yonote.fullUrl()` — использует `_workspaceUrl` из `auth.info` (например `https://remake.yonote.ru`), а не `yonote_base_url` (прокси)
+- Ссылка всегда синяя (`#4f6ef7`), при hover opacity 0.75
+- `.hero-reports-link` — новый CSS-класс
+
+**Подзаголовок «Создать отчёт»**
+- `<h2 class="section-heading">Создать отчёт</h2>` добавлен в HTML над блоком тегов
+- Стиль: 13px, uppercase, letter-spacing 1.5px, `var(--text-muted)`
+
+**Таймлайн прогресса свёрнут по умолчанию**
+- `.steps-timeline` создаётся с классом `collapsed` — шаги скрыты, виден только текущий в хедере
+- Раскрывается по клику
+
+---
+
+## 2026-02-23 — Редизайн под mereal.info
+
+### Что сделано
+- Применена цветовая палитра сайта mereal.info: кремовый фон (#f8f8f4), тёмный текст (#13131c), акцент (#55607d)
+- Логотип mereal.info (`images/mereal-logo.svg`) заменил звёздный SVG + текст "Yonote Reports" в хедере и на страницах авторизации
+- Шапка переделана в светлую (cream background) с нижней границей
+- Все основные кнопки переведены на gradient: `linear-gradient(135deg, #606c88, #3f4c6b)`
+- Заголовки страниц и кнопки оформлены в uppercase с letter-spacing
+- Добавлен Google Font Inter для более рафинированной типографики
+- Переименован `<title>` на "Mereal Reports"
+
+---
+
+## 2026-02-20 — Авторизация и система доступов
+
+### Что сделано
+Реализована полная система авторизации (логин/пароль + сессии) и управления доступами к проектам. Первый запуск → создание admin-аккаунта. Админ управляет пользователями и назначает проекты. Пользователи видят только назначенные проекты.
+
+### Backend
+
+**Новые файлы:**
+- `api/auth_middleware.php` — `requireAuth()` (cookie → session → user), `requireAdmin()` (проверка role)
+- `api/auth.php` — login (bcrypt + 500ms delay), logout, check (needs_setup detection), setup (first admin), change_password
+- `api/users.php` — CRUD пользователей (admin only) + `project_access` (назначение проектов по чекбоксам)
+
+**Изменённые файлы:**
+- `api/db.php` — 3 новые таблицы: `users`, `sessions`, `project_access` (FK + каскадное удаление)
+- `api/projects.php` — `requireAuth()` + фильтрация: admin видит все, user — только через `project_access` JOIN. POST/PUT/DELETE — admin only
+- `api/settings.php` — GET: `requireAuth()`, POST: admin only
+- `api/proxy.php` — `requireAuth()` на все запросы
+
+### Frontend
+
+**Новые файлы:**
+- `js/auth.js` — AuthClient: check, login, logout, setup, changePassword (cookie-based)
+- `js/user-api.js` — UserApi: list, get, create, update, delete
+
+**Изменённые файлы:**
+- `index.html` — viewLogin, viewSetup, viewAdmin divs; header с кнопками Пользователи/Настройки/Выйти/имя
+- `css/style.css` — auth-page (centered card), admin-page (user table), user-modal (project checkboxes), header-right/header-btn/header-user-name
+- `js/ui.js` — showLoginView, showSetupView, renderAdminView, showUserModal, showChangePasswordModal, renderProjectsViewWithRole
+- `js/main.js` — auth-first boot: check → setup/login → initApp; маршрут #/admin; role-based header
+
+### Безопасность
+- Пароли: `password_hash(PASSWORD_BCRYPT)` — bcrypt с salt
+- Токены: `bin2hex(random_bytes(32))` — 64-char crypto-random
+- Cookie: httpOnly + SameSite=Strict + path=/
+- Срок: 30 дней, автоочистка просроченных
+- Защита от перебора: 500ms delay на ошибку логина
+- Доступ: каждый endpoint проверяет `requireAuth()` / `requireAdmin()`
+
+### Тесты
+- 26 новых тестов в `tests/auth.test.js` (AuthClient, UserApi, UI login/setup/admin, role-based rendering)
+- jsdom добавлен как dev-зависимость для DOM-тестов
+- **294 теста, все проходят**
+
+---
+
 ## 2026-02-20 — Система проектов
 
 ### Что сделано

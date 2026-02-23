@@ -210,11 +210,51 @@
 - [x] `api/settings.php` — убраны page ID из глобальных настроек
 - [x] 268 тестов, все проходят
 
+### Этап 17: Авторизация и система доступов ✅
+- [x] SQLite: таблицы `users`, `sessions`, `project_access` с FK + каскадным удалением
+- [x] `api/auth_middleware.php` — `requireAuth()` / `requireAdmin()`, валидация cookie `session_token`
+- [x] `api/auth.php` — login (bcrypt verify + 500ms delay), logout, session check (needs_setup), setup (первый admin), change_password
+- [x] `api/users.php` — CRUD пользователей (admin only) с `project_access` (назначение проектов)
+- [x] Защита endpoints: `projects.php` (admin: все; user: только назначенные), `settings.php` (POST admin only), `proxy.php` (requireAuth)
+- [x] `js/auth.js` — AuthClient: check, login, logout, setup, changePassword
+- [x] `js/user-api.js` — UserApi: list, get, create, update, delete
+- [x] `index.html` — viewLogin, viewSetup, viewAdmin; header с кнопками Пользователи/Настройки/Выйти/имя пользователя
+- [x] CSS — стили: auth-page (login/setup), admin-page (таблица пользователей), user-modal (чекбоксы проектов), header-btn/header-user-name
+- [x] `js/ui.js` — showLoginView, showSetupView, renderAdminView, showUserModal (с чекбоксами проектов), showChangePasswordModal, renderProjectsViewWithRole (скрытие edit/delete для user)
+- [x] `js/main.js` — auth-first boot: check → setup/login → initApp; маршрут #/admin; role-based header
+- [x] Безопасность: bcrypt, crypto-random 64-char tokens, httpOnly+SameSite cookies, 30-day expiry, brute-force delay
+- [x] Тесты: 26 новых (AuthClient, UserApi, UI login/setup/admin, role-based rendering)
+- [x] 294 теста, все проходят
+
+### Этап 18: Редизайн под mereal.info ✅
+- [x] Цветовая палитра: кремовый фон (#f8f8f4), тёмный текст (#13131c), slate-blue акцент (#55607d)
+- [x] Логотип mereal.info (`images/mereal-logo.svg`) в хедере и на страницах авторизации
+- [x] TTFirsNeue — все 9 весов через Tilda CDN, font-weight 400 для всего
+- [x] Убраны border-radius (плоские карточки), большие плашки проектов
+- [x] Контентная область 1440px, padding 80px, левое выравнивание
+- [x] Меню (Пользователи / Настройки / Выход) перенесено в header справа
+- [x] История отчётов — фиксированная панель снизу по центру, раскрывается вверх (flex-direction: column-reverse), скруглённые углы 32px
+- [x] При наведении на отчёт в истории: текст меняется на «Открыть в Yonote» (синий #4f6ef7)
+- [x] Все primary-кнопки — синий градиент `linear-gradient(135deg, #606c88, #3f4c6b)`
+- [x] Таймлайн прогресса свёрнут по умолчанию (класс `collapsed` при создании)
+
+### Этап 19: Доработки UX страницы проекта ✅
+- [x] Удаление отчётов из истории: кнопка-корзина, `deleteHistoryItem()`, красный hover
+- [x] Заголовок страницы = название проекта (`project.name` → `h1`)
+- [x] Ссылка на страницу отчётов под заголовком (через `yonote.fullUrl()` от workspace URL)
+- [x] Подзаголовок «Создать отчёт» над блоком тегов (`<h2 class="section-heading">`)
+- [x] Ссылка всегда синяя (#4f6ef7)
+
+### Этап 20: Мелкие UX-правки ✅
+- [x] Клик по строке пользователя (вне кнопок) открывает модалку редактирования
+- [x] Hover карточки проекта: синий градиент `#606c88 → #3f4c6b` вместо чёрного
+- [x] `body { padding-top: 24px }` — воздух между хедером и контентом
+
 ## Где остановились
-**Дата:** 2026-02-20
+**Дата:** 2026-02-23
 
-Реализована система проектов (пункт 2 плана разработки). Каждый проект — отдельное рабочее пространство со своими page ID. Hash-роутер для SPA навигации. Глобальные настройки (токены) отделены от проектных (страницы).
+Закончены этапы 18–20: редизайн, UX доработки, мелкие правки интерфейса.
 
-**Следующий шаг:** ручная проверка через `php -S localhost:8000`, далее — система доступов (пункт 3 плана).
+**Следующий шаг:** дальнейшие правки дизайна или новые функции по запросу.
 
-**268 тестов, все проходят.**
+**294 теста, все проходят.**

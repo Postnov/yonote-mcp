@@ -17,8 +17,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth_middleware.php';
 
 $db = getDB();
+$currentUser = requireAuth();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $stmt = $db->query('SELECT key, value FROM settings');
@@ -32,6 +34,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if ($currentUser['role'] !== 'admin') {
+        http_response_code(403);
+        echo json_encode(['error' => 'Admin access required']);
+        exit;
+    }
     $input = json_decode(file_get_contents('php://input'), true);
     if (!$input || !isset($input['key']) || !isset($input['value'])) {
         http_response_code(400);

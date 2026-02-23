@@ -20,8 +20,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/auth_middleware.php';
 
 $db = getDB();
+$currentUser = requireAuth();
 
 $allowedDataKeys = ['tags_page_id', 'default_search_page_id', 'reports_page_id'];
 
@@ -56,9 +58,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             echo json_encode(['error' => 'Project not found']);
             exit;
         }
+        // Check access for non-admin users
+        if ($currentUser['role'] !== 'admin') {
+            $stmt2 = $db->prepare('SELECT id FROM project_access WHERE project_id = :pid AND user_id = :uid');
+            $stmt2->execute([':pid' => $id, ':uid' => $currentUser['id']]);
+            if (!$stmt2->fetch()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Access denied']);
+                exit;
+            }
+        }
         echo json_encode(decodeProjectRow($row), JSON_UNESCAPED_UNICODE);
     } else {
-        $stmt = $db->query('SELECT id, name, data, created_at FROM projects ORDER BY created_at DESC');
+        if ($currentUser['role'] === 'admin') {
+            $stmt = $db->query('SELECT id, name, data, created_at FROM projects ORDER BY created_at DESC');
+        } else {
+            $stmt = $db->prepare('
+                SELECT p.id, p.name, p.data, p.created_at
+                FROM projects p
+                JOIN project_access pa ON pa.project_id = p.id
+                WHERE pa.user_id = :uid
+                ORDER BY p.created_at DESC
+            ');
+            $stmt->execute([':uid' => $currentUser['id']]);
+        }
         $rows = $stmt->fetchAll();
         $result = array_map('decodeProjectRow', $rows);
         echo json_encode($result, JSON_UNESCAPED_UNICODE);
@@ -67,6 +90,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if ($currentUser['role'] !== 'admin') {
+        http_response_code(403);
+        echo json_encode(['error' => 'Admin access required']);
+        exit;
+    }
     $input = json_decode(file_get_contents('php://input'), true);
     $name = $input['name'] ?? 'Без названия';
     $data = validateDataFields($input['data'] ?? [], $allowedDataKeys);
@@ -85,6 +113,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'PUT') {
+    if ($currentUser['role'] !== 'admin') {
+        http_response_code(403);
+        echo json_encode(['error' => 'Admin access required']);
+        exit;
+    }
     $id = $_GET['id'] ?? null;
     if (!$id) {
         http_response_code(400);
@@ -126,6 +159,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'PUT') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
+    if ($currentUser['role'] !== 'admin') {
+        http_response_code(403);
+        echo json_encode(['error' => 'Admin access required']);
+        exit;
+    }
     $id = $_GET['id'] ?? null;
     if (!$id) {
         http_response_code(400);
