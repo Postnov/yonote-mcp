@@ -211,8 +211,10 @@ function renderTags(tags) {
                         <line x1="7" y1="7" x2="7.01" y2="7"/>
                     </svg>
                 </div>
-                <div>Теги не найдены</div>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Укажите страницу с тегами в настройках</div>
+                <div class="tags-error-body">
+                    <div>Теги не найдены</div>
+                    <div style="font-size:12px">Укажите страницу с тегами в настройках</div>
+                </div>
             </div>
         `;
         return;
@@ -287,8 +289,10 @@ async function loadAndRenderTags() {
                         <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
                     </svg>
                 </div>
-                <div>Укажите страницу с тегами</div>
-                <button class="tags-error-action" id="btnOpenSettingsFromTags">Открыть настройки</button>
+                <div class="tags-error-body">
+                    <div>Укажите страницу с тегами</div>
+                    <button class="tags-error-action" id="btnOpenSettingsFromTags">Открыть настройки</button>
+                </div>
             </div>
         `;
         const btn = document.getElementById('btnOpenSettingsFromTags');
@@ -316,8 +320,10 @@ async function loadAndRenderTags() {
                         <line x1="9" y1="9" x2="15" y2="15"/>
                     </svg>
                 </div>
-                <div>Ошибка загрузки тегов</div>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${escapeHtml(e.message)}</div>
+                <div class="tags-error-body">
+                    <div>Ошибка загрузки тегов</div>
+                    <div style="font-size:12px">${escapeHtml(e.message)}</div>
+                </div>
             </div>
         `;
     }
