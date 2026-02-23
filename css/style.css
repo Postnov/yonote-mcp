@@ -310,7 +310,7 @@ body {
     align-items: flex-start;
     gap: 8px;
     padding: 10px 12px;
-    border-radius: var(--radius-sm);
+    border-radius: 20px;
     cursor: pointer;
     transition: all var(--transition);
     position: relative;
@@ -321,24 +321,17 @@ body {
 }
 
 .history-item-label {
-    position: relative;
     transition: color 100ms ease;
 }
 
-.history-item:hover .history-item-label {
-    color: transparent;
+.history-item:hover .history-item-label::after {
+    content: ' — открыть в Yonote';
+    color: #4f6ef7;
 }
 
-.history-item:hover .history-item-label::after {
-    content: 'Открыть в Yonote';
-    position: absolute;
-    left: 0;
-    top: 0;
-    color: #4f6ef7;
-    font-size: 13px;
-    font-weight: 500;
-    white-space: nowrap;
-}
+.history-item .icon-hover { display: none; }
+.history-item:hover .icon-default { display: none; }
+.history-item:hover .icon-hover { display: block; color: #4f6ef7; }
 
 .history-item-icon {
     width: 20px;
