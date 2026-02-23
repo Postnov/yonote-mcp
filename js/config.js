@@ -12,7 +12,7 @@ export class Config {
 
     async load() {
         try {
-            const resp = await fetch('/api/settings.php');
+            const resp = await fetch('api/settings.php');
             if (resp.ok) {
                 this._settings = await resp.json();
             }
@@ -32,7 +32,7 @@ export class Config {
     }
 
     async save(key, value) {
-        const resp = await fetch('/api/settings.php', {
+        const resp = await fetch('api/settings.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ key, value }),

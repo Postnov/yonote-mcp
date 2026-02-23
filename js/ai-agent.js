@@ -263,7 +263,7 @@ export class AIAgent {
             ...this.conversationHistory.slice(-10),
         ];
 
-        const resp = await fetch('/api/proxy.php', {
+        const resp = await fetch('api/proxy.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -336,7 +336,7 @@ RULES:
 Text to translate:
 ${text}`;
 
-    const resp = await fetch('/api/proxy.php', {
+    const resp = await fetch('api/proxy.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,3 +1,6 @@
+# Correct MIME type for ES modules
+AddType application/javascript .js .mjs
+
 # Protect data directory from direct access
 <IfModule mod_rewrite.c>
     RewriteEngine On

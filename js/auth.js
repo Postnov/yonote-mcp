@@ -8,7 +8,7 @@ export class AuthClient {
      * @returns {{user: {id, email, name, role}}|{error, needs_setup}}
      */
     async check() {
-        const resp = await fetch('/api/auth.php', { credentials: 'same-origin' });
+        const resp = await fetch('api/auth.php', { credentials: 'same-origin' });
         const data = await resp.json();
         if (!resp.ok) return { error: data.error, needs_setup: data.needs_setup || false };
         return data;
@@ -19,7 +19,7 @@ export class AuthClient {
      * @returns {{token, user}|{error}}
      */
     async login(email, password) {
-        const resp = await fetch('/api/auth.php', {
+        const resp = await fetch('api/auth.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -34,7 +34,7 @@ export class AuthClient {
      * Logout — clear session.
      */
     async logout() {
-        await fetch('/api/auth.php', {
+        await fetch('api/auth.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -47,7 +47,7 @@ export class AuthClient {
      * @returns {{token, user}}
      */
     async setup(email, password, name) {
-        const resp = await fetch('/api/auth.php', {
+        const resp = await fetch('api/auth.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
@@ -62,7 +62,7 @@ export class AuthClient {
      * Change current user's password.
      */
     async changePassword(currentPassword, newPassword) {
-        const resp = await fetch('/api/auth.php', {
+        const resp = await fetch('api/auth.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',

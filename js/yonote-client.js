@@ -11,7 +11,7 @@ export class YonoteClient {
 
     async _post(endpoint, data = {}) {
         const url = `${this.baseUrl}/${endpoint}`;
-        const resp = await fetch('/api/proxy.php', {
+        const resp = await fetch('api/proxy.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -170,7 +170,7 @@ export class YonoteClient {
         }
 
         // Step 3: Get redirect URL (noRedirect mode)
-        const redirectResp = await fetch('/api/proxy.php', {
+        const redirectResp = await fetch('api/proxy.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -189,7 +189,7 @@ export class YonoteClient {
         if (!redirectUrl) throw new Error('No redirect URL from export');
 
         // Step 4: Download content
-        const downloadResp = await fetch('/api/proxy.php', {
+        const downloadResp = await fetch('api/proxy.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
