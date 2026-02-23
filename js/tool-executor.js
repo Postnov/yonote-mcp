@@ -619,30 +619,36 @@ export class ToolExecutor {
         const compiledParts = [];
 
         if (isMulti) {
-            // Multi-heading: group by heading with # header and --- separator
-            let firstGroup = true;
+            // Multi-heading: group by page, then by heading
+            const pageMap = new Map();
             for (const h of headings) {
-                const sections = foundByHeading[h];
-                if (!sections.length) continue;
+                for (const section of (foundByHeading[h] || [])) {
+                    if (!pageMap.has(section.page_title)) {
+                        pageMap.set(section.page_title, { page_title: section.page_title, path: section.path, headingSections: [] });
+                    }
+                    pageMap.get(section.page_title).headingSections.push({ heading: h, content: section.content });
+                }
+            }
 
-                if (!firstGroup) {
+            let firstPage = true;
+            for (const [, page] of pageMap) {
+                if (!firstPage) {
                     compiledParts.push('');
                     compiledParts.push('---');
                     compiledParts.push('');
                 }
-                firstGroup = false;
+                firstPage = false;
 
-                compiledParts.push(`# ${this._capitalizeFirst(h)}`);
+                compiledParts.push(`# ${page.page_title}`);
+                if (breadcrumbs && page.path.length) {
+                    compiledParts.push(`*${page.path.join(' → ')}*`);
+                }
                 compiledParts.push('');
 
-                for (const section of sections) {
-                    compiledParts.push(`## ${section.page_title}`);
-                    if (breadcrumbs && section.path.length) {
-                        compiledParts.push(`*${section.path.join(' → ')}*`);
-                    }
+                for (const { heading, content } of page.headingSections) {
+                    compiledParts.push(`## ${this._capitalizeFirst(heading)}`);
                     compiledParts.push('');
-                    compiledParts.push(section.content);
-                    compiledParts.push('');
+                    compiledParts.push(content);
                     compiledParts.push('');
                 }
             }

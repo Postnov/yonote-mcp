@@ -63,17 +63,11 @@ function updateHeaderForUser(user) {
     const btnUsers = document.getElementById('btnUsers');
     const btnSettings = document.getElementById('btnSettings');
     const btnLogout = document.getElementById('btnLogout');
-    const userName = document.getElementById('userName');
-
     const isAdmin = user.role === 'admin';
 
     if (btnUsers) btnUsers.style.display = isAdmin ? '' : 'none';
     if (btnSettings) btnSettings.style.display = isAdmin ? '' : 'none';
     if (btnLogout) btnLogout.style.display = '';
-    if (userName) {
-        userName.style.display = '';
-        userName.textContent = user.name || user.email;
-    }
 }
 
 async function loadProjectsView() {
@@ -153,17 +147,20 @@ async function loadAdminView() {
                 });
             },
             onEdit: (user) => {
-                showUserModal(user, projects, async (data) => {
-                    await _userApi.update(user.id, data);
-                    await loadAdminView();
-                });
+                showUserModal(
+                    user,
+                    projects,
+                    async (data) => {
+                        await _userApi.update(user.id, data);
+                        await loadAdminView();
+                    },
+                    () => showDeleteConfirm(user.name || user.email, async () => {
+                        await _userApi.delete(user.id);
+                        await loadAdminView();
+                    }, 'пользователя')
+                );
             },
-            onDelete: (user) => {
-                showDeleteConfirm(user.name || user.email, async () => {
-                    await _userApi.delete(user.id);
-                    await loadAdminView();
-                });
-            },
+            onDelete: () => {},
         });
     } catch (e) {
         console.error('Failed to load admin view:', e);

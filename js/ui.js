@@ -842,7 +842,7 @@ export function showProjectModal(project, onSave) {
     setTimeout(() => document.getElementById('projectName')?.focus(), 100);
 }
 
-export function showDeleteConfirm(projectName, onConfirm) {
+export function showDeleteConfirm(name, onConfirm, type = 'проект') {
     const existing = document.getElementById('deleteConfirmModal');
     if (existing) existing.remove();
 
@@ -852,11 +852,11 @@ export function showDeleteConfirm(projectName, onConfirm) {
     modal.innerHTML = `
         <div class="project-modal">
             <div class="project-modal-header">
-                <h2>Удалить проект</h2>
+                <h2>Удалить ${escapeHtml(type)}</h2>
             </div>
             <div class="project-modal-body">
                 <div class="delete-confirm-text">
-                    Вы уверены, что хотите удалить проект <span class="delete-confirm-name">${escapeHtml(projectName)}</span>?
+                    Вы уверены, что хотите удалить ${escapeHtml(type)} <span class="delete-confirm-name">${escapeHtml(name)}</span>?
                     Это действие нельзя отменить.
                 </div>
             </div>
@@ -1135,43 +1135,17 @@ export function renderAdminView(users, projects, { onAdd, onEdit, onDelete }) {
         const row = document.createElement('div');
         row.className = 'user-row';
         row.innerHTML = `
-            <div class="user-avatar">${escapeHtml(initials)}</div>
             <div class="user-info">
                 <div class="user-name">${escapeHtml(user.name || user.email)}</div>
                 <div class="user-email">${escapeHtml(user.email)}</div>
             </div>
-            <span class="user-badge ${user.role}">${user.role === 'admin' ? 'Администратор' : 'Пользователь'}</span>
             <span class="user-projects-count">${escapeHtml(projectText)}</span>
-            ${user.role !== 'admin' ? `
-                <div class="user-actions">
-                    <button class="project-action-btn edit-user-btn" title="Редактировать">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                        </svg>
-                    </button>
-                    <button class="project-action-btn danger delete-user-btn" title="Удалить">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                        </svg>
-                    </button>
-                </div>
-            ` : ''}
+            <span class="user-badge ${user.role}">${user.role === 'admin' ? 'Администратор' : 'Пользователь'}</span>
         `;
-
-        const editBtn = row.querySelector('.edit-user-btn');
-        if (editBtn) editBtn.addEventListener('click', (e) => { e.stopPropagation(); onEdit(user); });
-
-        const deleteBtn = row.querySelector('.delete-user-btn');
-        if (deleteBtn) deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); onDelete(user); });
 
         if (user.role !== 'admin') {
             row.style.cursor = 'pointer';
-            row.addEventListener('click', (e) => {
-                if (e.target.closest('.user-actions')) return;
-                onEdit(user);
-            });
+            row.addEventListener('click', () => onEdit(user));
         }
 
         table.appendChild(row);
@@ -1182,7 +1156,7 @@ export function renderAdminView(users, projects, { onAdd, onEdit, onDelete }) {
 
 // --- User Modal (create/edit with project checkboxes) ---
 
-export function showUserModal(user, projects, onSave) {
+export function showUserModal(user, projects, onSave, onDelete) {
     const existing = document.getElementById('userModal');
     if (existing) existing.remove();
 
@@ -1230,8 +1204,16 @@ export function showUserModal(user, projects, onSave) {
                 ` : ''}
             </div>
             <div class="project-modal-footer">
-                <button class="btn-secondary" id="btnUserCancel">Отмена</button>
                 <button class="btn-primary" id="btnUserSave">Сохранить</button>
+                <button class="btn-secondary" id="btnUserCancel">Отмена</button>
+                ${isEdit && onDelete ? `
+                    <button class="btn-icon-danger" id="btnUserDelete" title="Удалить пользователя">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                    </button>
+                ` : ''}
             </div>
             <div class="settings-modal-error" id="userModalError" style="display:none"></div>
         </div>
@@ -1240,6 +1222,9 @@ export function showUserModal(user, projects, onSave) {
     document.body.appendChild(modal);
 
     document.getElementById('btnUserCancel').addEventListener('click', () => modal.remove());
+
+    const deleteBtn = document.getElementById('btnUserDelete');
+    if (deleteBtn) deleteBtn.addEventListener('click', () => { modal.remove(); onDelete(); });
 
     document.getElementById('btnUserSave').addEventListener('click', async () => {
         const name = document.getElementById('userModalName').value.trim();
@@ -1431,3 +1416,16 @@ export function renderProjectsViewWithRole(projects, userRole, { onCreate, onEdi
         grid.appendChild(newCard);
     }
 }
+
+// === Global modal close: Esc key + click outside ===
+const MODAL_SELECTOR = '.project-modal-overlay, .settings-modal-overlay';
+
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const modals = document.querySelectorAll(MODAL_SELECTOR);
+    if (modals.length) modals[modals.length - 1].remove();
+});
+
+document.addEventListener('click', (e) => {
+    if (e.target.matches(MODAL_SELECTOR)) e.target.remove();
+});
