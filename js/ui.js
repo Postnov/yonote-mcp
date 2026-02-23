@@ -677,6 +677,65 @@ export function showSettingsModal(config, onSaveCallback) {
     });
 }
 
+// --- Settings Page ---
+
+export function renderSettingsView(config, onSaveCallback) {
+    const container = document.getElementById('viewSettings');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="settings-page">
+            <div class="settings-page-header">
+                <h1>Настройки</h1>
+                <p>API-ключи для подключения к сервисам</p>
+            </div>
+            <div class="settings-page-body">
+                <div class="settings-field">
+                    <label for="spYonoteToken">Yonote API Token</label>
+                    <input type="password" id="spYonoteToken" placeholder="0Amn3Uo..." value="${escapeHtml(config.get('yonote_api_token'))}">
+                </div>
+                <div class="settings-field">
+                    <label for="spYonoteUrl">Yonote Base URL</label>
+                    <input type="text" id="spYonoteUrl" placeholder="https://app.yonote.ru/api" value="${escapeHtml(config.get('yonote_base_url') || 'https://app.yonote.ru/api')}">
+                </div>
+                <div class="settings-field">
+                    <label for="spDeepseekKey">DeepSeek API Key</label>
+                    <input type="password" id="spDeepseekKey" placeholder="sk-..." value="${escapeHtml(config.get('deepseek_api_key'))}">
+                </div>
+                <div class="settings-page-footer">
+                    <button class="btn-settings-save" id="btnSettingsPageSave">Сохранить</button>
+                </div>
+                <div class="settings-page-error" id="settingsPageError"></div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('btnSettingsPageSave').addEventListener('click', async () => {
+        const token = document.getElementById('spYonoteToken').value.trim();
+        const url = document.getElementById('spYonoteUrl').value.trim();
+        const key = document.getElementById('spDeepseekKey').value.trim();
+        const errorEl = document.getElementById('settingsPageError');
+
+        errorEl.style.display = 'none';
+
+        if (!token) {
+            errorEl.textContent = 'Введите Yonote API Token';
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        try {
+            await config.save('yonote_api_token', token);
+            await config.save('yonote_base_url', url || 'https://app.yonote.ru/api');
+            await config.save('deepseek_api_key', key);
+            if (onSaveCallback) onSaveCallback();
+        } catch (e) {
+            errorEl.textContent = `Ошибка сохранения: ${e.message}`;
+            errorEl.style.display = 'block';
+        }
+    });
+}
+
 // --- Projects View ---
 
 const MONTHS_RU_SHORT = [
@@ -888,7 +947,7 @@ export function showDeleteConfirm(name, onConfirm, type = 'проект') {
 
 // --- Main init ---
 
-export function initReportView(executor, eventBus, config, yonote, projectId, project) {
+export function initReportView(executor, eventBus, config, yonote, projectId, project, { onEditProject, onDeleteProject } = {}) {
     _executor = executor;
     _eventBus = eventBus;
     _config = config;
@@ -925,15 +984,46 @@ export function initReportView(executor, eventBus, config, yonote, projectId, pr
         heroH1.textContent = project.name;
     }
     if (heroSubtitle) {
-        heroSubtitle.textContent = 'Выберите темы для сбора данных';
-        heroSubtitle.removeAttribute('data-link');
+        heroSubtitle.className = 'hero-actions';
+        heroSubtitle.innerHTML = `
+            <span id="heroReportsLinkSlot"></span>
+            ${onEditProject ? `
+                <button class="hero-icon-btn" id="btnProjectSettings">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                    Настройки
+                </button>
+            ` : ''}
+            ${onDeleteProject ? `
+                <button class="hero-icon-btn hero-icon-btn--danger" id="btnProjectDelete">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    Удалить
+                </button>
+            ` : ''}
+        `;
+
+        document.getElementById('btnProjectSettings')?.addEventListener('click', () => onEditProject?.());
+        document.getElementById('btnProjectDelete')?.addEventListener('click', () => onDeleteProject?.());
+
         const reportsPageId = config.get('reports_page_id');
         if (reportsPageId && yonote) {
             yonote.documentInfo(reportsPageId).then(result => {
                 const rawUrl = result?.data?.url;
-                if (rawUrl && heroSubtitle) {
+                const slot = document.getElementById('heroReportsLinkSlot');
+                if (rawUrl && slot) {
                     const url = yonote.fullUrl(rawUrl);
-                    heroSubtitle.innerHTML = `<a href="${escapeHtml(url)}" target="_blank" class="hero-reports-link">Страница отчётов →</a>`;
+                    slot.outerHTML = `<a href="${escapeHtml(url)}" target="_blank" class="hero-reports-link">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="7" y1="17" x2="17" y2="7"/>
+                            <polyline points="7 7 17 7 17 17"/>
+                        </svg>
+                        Отчёты проекта
+                    </a>`;
                 }
             }).catch(() => {});
         }
@@ -970,7 +1060,7 @@ export function showLoginView(onLogin) {
         <div class="auth-page">
             <div class="auth-card">
                 <div class="auth-brand">
-                    <img src="/images/mereal-logo.svg" alt="Mereal" class="auth-logo">
+                    <img src="./images/mereal-logo.svg" alt="Mereal" class="auth-logo">
                 </div>
                 <div class="auth-form">
                     <div class="auth-field">
@@ -1036,7 +1126,7 @@ export function showSetupView(onSetup) {
         <div class="auth-page">
             <div class="auth-card">
                 <div class="auth-brand">
-                    <img src="/images/mereal-logo.svg" alt="Mereal" class="auth-logo">
+                    <img src="./images/mereal-logo.svg" alt="Mereal" class="auth-logo">
                 </div>
                 <h2 class="auth-title">Первый запуск</h2>
                 <p class="auth-subtitle">Создайте аккаунт администратора</p>

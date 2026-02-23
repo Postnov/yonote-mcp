@@ -14,8 +14,8 @@ import { UserApi } from './user-api.js';
 import {
     initReportView,
     showSettingsModal,
-    renderProjectsView,
     renderProjectsViewWithRole,
+    renderSettingsView,
     showProjectModal,
     showDeleteConfirm,
     showLoginView,
@@ -54,26 +54,31 @@ function showHeader(visible) {
 
 function updateHeader(isProjectView) {
     const btnBack = document.getElementById('btnBack');
-    const headerBrand = document.getElementById('headerBrand');
     if (btnBack) btnBack.style.display = isProjectView ? '' : 'none';
-    if (headerBrand) headerBrand.style.display = isProjectView ? 'none' : '';
 }
 
 function updateHeaderForUser(user) {
-    const btnUsers = document.getElementById('btnUsers');
-    const btnSettings = document.getElementById('btnSettings');
+    const btnNavUsers = document.getElementById('btnNavUsers');
+    const btnNavSettings = document.getElementById('btnNavSettings');
     const btnLogout = document.getElementById('btnLogout');
     const isAdmin = user.role === 'admin';
 
-    if (btnUsers) btnUsers.style.display = isAdmin ? '' : 'none';
-    if (btnSettings) btnSettings.style.display = isAdmin ? '' : 'none';
+    if (btnNavUsers) btnNavUsers.style.display = isAdmin ? '' : 'none';
+    if (btnNavSettings) btnNavSettings.style.display = isAdmin ? '' : 'none';
     if (btnLogout) btnLogout.style.display = '';
+}
+
+function setActiveNav(btnId) {
+    document.querySelectorAll('.header-nav-btn').forEach(b => b.classList.remove('is-active'));
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.add('is-active');
 }
 
 async function loadProjectsView() {
     _config.clearProject();
     showView('viewProjects');
     updateHeader(false);
+    setActiveNav('btnNavProjects');
 
     try {
         const projects = await _projectApi.list();
@@ -111,13 +116,27 @@ async function loadProjectView(params) {
     const projectId = params.id;
     showView('viewReport');
     updateHeader(true);
+    setActiveNav('btnNavProjects');
 
     try {
         const project = await _projectApi.get(projectId);
         _config.setProject(project);
 
         const executor = new ToolExecutor(_yonote, null, _eventBus, _config);
-        initReportView(executor, _eventBus, _config, _yonote, projectId, project);
+        initReportView(executor, _eventBus, _config, _yonote, projectId, project, {
+            onEditProject: () => {
+                showProjectModal(project, async (name, data) => {
+                    await _projectApi.update(project.id, { name, data });
+                    await loadProjectView(params);
+                });
+            },
+            onDeleteProject: () => {
+                showDeleteConfirm(project.name, async () => {
+                    await _projectApi.delete(project.id);
+                    _router.navigate('#/projects');
+                });
+            },
+        });
     } catch (e) {
         console.error('Failed to load project:', e);
         _router.navigate('#/projects');
@@ -131,7 +150,8 @@ async function loadAdminView() {
     }
 
     showView('viewAdmin');
-    updateHeader(true);
+    updateHeader(false);
+    setActiveNav('btnNavUsers');
 
     try {
         const [users, projects] = await Promise.all([
@@ -167,6 +187,19 @@ async function loadAdminView() {
     }
 }
 
+async function loadSettingsView() {
+    if (!_currentUser || _currentUser.role !== 'admin') {
+        _router.navigate('#/projects');
+        return;
+    }
+
+    showView('viewSettings');
+    updateHeader(false);
+    setActiveNav('btnNavSettings');
+
+    renderSettingsView(_config, () => window.location.reload());
+}
+
 async function initApp() {
     _config = new Config();
     _eventBus = new EventBus();
@@ -195,42 +228,41 @@ async function initApp() {
     showHeader(true);
     updateHeaderForUser(_currentUser);
 
-    // Settings button (admin only)
-    const btnSettings = document.getElementById('btnSettings');
-    if (btnSettings) {
-        const newBtn = btnSettings.cloneNode(true);
-        btnSettings.parentNode.replaceChild(newBtn, btnSettings);
-        newBtn.addEventListener('click', () => {
-            showSettingsModal(_config, () => window.location.reload());
-        });
+    // Logo click → projects
+    const headerBrand = document.querySelector('.header-brand');
+    if (headerBrand) {
+        headerBrand.style.cursor = 'pointer';
+        headerBrand.addEventListener('click', () => _router.navigate('#/projects'));
     }
 
-    // Users button (admin only)
-    const btnUsers = document.getElementById('btnUsers');
-    if (btnUsers) {
-        const newBtn = btnUsers.cloneNode(true);
-        btnUsers.parentNode.replaceChild(newBtn, btnUsers);
-        newBtn.addEventListener('click', () => {
-            _router.navigate('#/admin');
-        });
+    // Nav: Projects
+    const btnNavProjects = document.getElementById('btnNavProjects');
+    if (btnNavProjects) {
+        btnNavProjects.addEventListener('click', () => _router.navigate('#/projects'));
+    }
+
+    // Nav: Users (admin only)
+    const btnNavUsers = document.getElementById('btnNavUsers');
+    if (btnNavUsers) {
+        btnNavUsers.addEventListener('click', () => _router.navigate('#/admin'));
+    }
+
+    // Nav: Settings (admin only)
+    const btnNavSettings = document.getElementById('btnNavSettings');
+    if (btnNavSettings) {
+        btnNavSettings.addEventListener('click', () => _router.navigate('#/settings'));
     }
 
     // Back button
     const btnBack = document.getElementById('btnBack');
     if (btnBack) {
-        const newBtn = btnBack.cloneNode(true);
-        btnBack.parentNode.replaceChild(newBtn, btnBack);
-        newBtn.addEventListener('click', () => {
-            _router.navigate('#/projects');
-        });
+        btnBack.addEventListener('click', () => _router.navigate('#/projects'));
     }
 
     // Logout button
     const btnLogout = document.getElementById('btnLogout');
     if (btnLogout) {
-        const newBtn = btnLogout.cloneNode(true);
-        btnLogout.parentNode.replaceChild(newBtn, btnLogout);
-        newBtn.addEventListener('click', async () => {
+        btnLogout.addEventListener('click', async () => {
             await _authClient.logout();
             _currentUser = null;
             window.location.reload();
@@ -242,6 +274,7 @@ async function initApp() {
     _router.add('#/projects', () => loadProjectsView());
     _router.add('#/project/:id', (params) => loadProjectView(params));
     _router.add('#/admin', () => loadAdminView());
+    _router.add('#/settings', () => loadSettingsView());
     _router.start();
 }
 

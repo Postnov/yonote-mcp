@@ -132,13 +132,48 @@ body {
     height: 100%;
     display: flex;
     align-items: center;
-    justify-content: space-between;
 }
 
 .header-right {
     display: flex;
     align-items: center;
     gap: 2px;
+}
+
+.header-nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+    margin-right: 24px;
+}
+
+.header-nav-btn {
+    display: flex;
+    align-items: center;
+    padding: 6px 14px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--header-muted);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    transition: color var(--transition), background var(--transition);
+    outline: none;
+}
+
+.header-nav-btn:hover {
+    color: var(--text-primary);
+    background: rgba(19, 19, 28, 0.06);
+}
+
+.header-nav-btn.is-active {
+    color: var(--text-primary);
+    font-weight: 500;
+    background: rgba(19, 19, 28, 0.07);
 }
 
 .header-user-name {
@@ -198,23 +233,20 @@ body {
 .header-back {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    padding: 5px;
     background: transparent;
     border: none;
-    border-radius: 0;
+    border-radius: 6px;
     color: var(--header-muted);
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 400;
-    letter-spacing: 0.5px;
     cursor: pointer;
-    transition: all var(--transition);
+    transition: color var(--transition), background var(--transition);
+    outline: none;
+    margin-left: 4px;
 }
 
 .header-back:hover {
     background: rgba(19, 19, 28, 0.06);
-    color: var(--header-text);
+    color: var(--text-primary);
 }
 
 /* === History Panel (fixed bottom center, opens upward) === */
@@ -442,15 +474,54 @@ body {
     color: var(--text-muted);
 }
 
+.hero-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+}
+
 .hero-reports-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
     font-size: 14px;
     color: #4f6ef7;
     text-decoration: none;
-    transition: opacity var(--transition);
+    border-radius: 6px;
+    transition: background var(--transition);
 }
 
 .hero-reports-link:hover {
-    opacity: 0.75;
+    background: rgba(79, 110, 247, 0.08);
+}
+
+.hero-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: color var(--transition), background var(--transition);
+    outline: none;
+    white-space: nowrap;
+}
+
+.hero-icon-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.hero-icon-btn--danger:hover {
+    color: var(--error);
+    background: var(--error-dim);
 }
 
 .section-heading {
@@ -981,7 +1052,7 @@ body {
 
 .settings-field input {
     padding: 10px 14px;
-    background: var(--bg-secondary);
+    background: #fff;
     border: 1.5px solid var(--border);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
@@ -1544,6 +1615,56 @@ body {
     display: block;
 }
 
+/* === Settings Page === */
+
+.settings-page {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 60px 80px 80px;
+}
+
+.settings-page-header {
+    margin-bottom: 40px;
+}
+
+.settings-page-header h1 {
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+}
+
+.settings-page-header p {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.settings-page-body {
+    max-width: 520px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.settings-page-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.settings-page-error {
+    padding: 10px 14px;
+    background: var(--error-dim);
+    border: 1px solid rgba(220, 38, 38, 0.15);
+    border-radius: var(--radius-sm);
+    color: var(--error);
+    font-size: 13px;
+    display: none;
+}
+
 /* === Admin Page === */
 .admin-page {
     max-width: 1440px;
@@ -1720,6 +1841,11 @@ body {
         padding: 0 20px;
     }
 
+    .header-nav-btn {
+        padding: 6px 10px;
+        font-size: 12px;
+    }
+
     .header-btn {
         min-width: 44px;
         min-height: 44px;
@@ -1727,13 +1853,15 @@ body {
         padding: 0 10px;
     }
 
-    .header-btn span {
-        display: none;
-    }
-
     .header-back {
+        min-width: 44px;
         min-height: 44px;
         padding: 0 8px;
+    }
+
+    /* Settings page */
+    .settings-page {
+        padding: 24px 20px 60px;
     }
 
     /* App layout: allow natural scroll on mobile */
@@ -1943,6 +2071,21 @@ body {
 
     .admin-header h1 {
         font-size: 24px;
+    }
+
+    /* Settings page */
+    .settings-page {
+        padding: 20px 16px 60px;
+    }
+
+    .settings-page-header h1 {
+        font-size: 24px;
+    }
+
+    /* Header nav — hide text labels on very small screens */
+    .header-nav-btn {
+        padding: 6px 8px;
+        font-size: 11px;
     }
 }
 

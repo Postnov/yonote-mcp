@@ -4,39 +4,28 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mereal Reports</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <base href="./">
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <header class="app-header" id="appHeader" style="display:none">
         <div class="header-inner">
             <div class="header-left">
+                <div class="header-brand">
+                    <img src="./images/mereal-logo.svg" alt="Mereal" class="header-logo">
+                </div>
                 <button id="btnBack" class="header-back" style="display:none" title="К проектам">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="15 18 9 12 15 6"/>
                     </svg>
-                    <span>Проекты</span>
                 </button>
-                <div class="header-brand" id="headerBrand">
-                    <img src="/images/mereal-logo.svg" alt="Mereal" class="header-logo">
-                </div>
             </div>
+            <nav class="header-nav" id="headerNav">
+                <button id="btnNavProjects" class="header-nav-btn">Проекты</button>
+                <button id="btnNavUsers" class="header-nav-btn" style="display:none">Пользователи</button>
+                <button id="btnNavSettings" class="header-nav-btn" style="display:none">Настройки</button>
+            </nav>
             <div class="header-right">
-<button id="btnUsers" class="header-btn" style="display:none" title="Пользователи">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                        <circle cx="9" cy="7" r="4"/>
-                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-                    </svg>
-                    <span>Пользователи</span>
-                </button>
-                <button id="btnSettings" class="header-btn" style="display:none" title="Настройки">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3"/>
-                        <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-                    </svg>
-                    <span>Настройки</span>
-                </button>
                 <button id="btnLogout" class="header-btn header-btn--logout" style="display:none" title="Выйти">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -124,6 +113,9 @@
     <!-- Admin view -->
     <div id="viewAdmin" class="view"></div>
 
-    <script type="module" src="/js/main.js"></script>
+    <!-- Settings view -->
+    <div id="viewSettings" class="view"></div>
+
+    <script type="module" src="js/main.js"></script>
 </body>
 </html>
