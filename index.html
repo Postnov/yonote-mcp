@@ -26,6 +26,13 @@
                 <button id="btnNavSettings" class="header-nav-btn" style="display:none">Настройки</button>
             </nav>
             <div class="header-right">
+                <button id="btnBurger" class="header-burger" title="Меню">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="6" x2="21" y2="6"/>
+                        <line x1="3" y1="12" x2="21" y2="12"/>
+                        <line x1="3" y1="18" x2="21" y2="18"/>
+                    </svg>
+                </button>
                 <button id="btnLogout" class="header-btn header-btn--logout" style="display:none" title="Выйти">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -36,6 +43,35 @@
             </div>
         </div>
     </header>
+
+    <!-- Mobile drawer menu -->
+    <div class="mobile-drawer-overlay" id="mobileDrawerOverlay"></div>
+    <aside class="mobile-drawer" id="mobileDrawer">
+        <div class="mobile-drawer-header">
+            <span class="mobile-drawer-title">Меню</span>
+            <button id="btnCloseDrawer" class="mobile-drawer-close">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+        <nav class="mobile-drawer-nav" id="mobileDrawerNav">
+            <button id="btnDrawerProjects" class="mobile-drawer-btn">Проекты</button>
+            <button id="btnDrawerUsers" class="mobile-drawer-btn" style="display:none">Пользователи</button>
+            <button id="btnDrawerSettings" class="mobile-drawer-btn" style="display:none">Настройки</button>
+        </nav>
+        <div class="mobile-drawer-footer">
+            <button id="btnDrawerLogout" class="mobile-drawer-btn mobile-drawer-btn--logout" style="display:none">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <polyline points="16 17 21 12 16 7"/>
+                    <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+                Выйти
+            </button>
+        </div>
+    </aside>
 
     <!-- Login view -->
     <div id="viewLogin" class="view"></div>
@@ -59,6 +95,12 @@
         <div class="app-layout">
             <main class="main-content">
                 <div class="hero-section">
+                    <button id="btnBackMobile" class="back-link-mobile" style="display:none">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="15 18 9 12 15 6"/>
+                        </svg>
+                        К проектам
+                    </button>
                     <h1>Создать отчёт</h1>
                     <p class="hero-subtitle">Выберите темы для сбора данных</p>
                 </div>
@@ -107,6 +149,46 @@
     <script>
         document.getElementById('historyPanelToggle').addEventListener('click', () => {
             document.getElementById('historyPanel').classList.toggle('is-open');
+        });
+
+        // Mobile drawer
+        const drawer = document.getElementById('mobileDrawer');
+        const overlay = document.getElementById('mobileDrawerOverlay');
+        const openDrawer = () => {
+            drawer.classList.add('is-open');
+            overlay.classList.add('is-open');
+            document.body.style.overflow = 'hidden';
+        };
+        const closeDrawer = () => {
+            drawer.classList.remove('is-open');
+            overlay.classList.remove('is-open');
+            document.body.style.overflow = '';
+        };
+        document.getElementById('btnBurger').addEventListener('click', openDrawer);
+        document.getElementById('btnCloseDrawer').addEventListener('click', closeDrawer);
+        overlay.addEventListener('click', closeDrawer);
+
+        // Sync drawer buttons with header buttons
+        document.getElementById('btnDrawerProjects').addEventListener('click', () => {
+            document.getElementById('btnNavProjects').click();
+            closeDrawer();
+        });
+        document.getElementById('btnDrawerUsers').addEventListener('click', () => {
+            document.getElementById('btnNavUsers').click();
+            closeDrawer();
+        });
+        document.getElementById('btnDrawerSettings').addEventListener('click', () => {
+            document.getElementById('btnNavSettings').click();
+            closeDrawer();
+        });
+        document.getElementById('btnDrawerLogout').addEventListener('click', () => {
+            document.getElementById('btnLogout').click();
+            closeDrawer();
+        });
+
+        // Mobile back button syncs with header back
+        document.getElementById('btnBackMobile').addEventListener('click', () => {
+            document.getElementById('btnBack').click();
         });
 </script>
 

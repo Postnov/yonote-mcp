@@ -123,6 +123,7 @@ body {
     height: 60px;
     background: var(--header-bg);
     color: var(--header-text);
+    overflow: hidden;
 }
 
 .header-inner {
@@ -146,6 +147,9 @@ body {
     gap: 2px;
     margin-left: auto;
     margin-right: 24px;
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .header-nav-btn {
@@ -213,6 +217,26 @@ body {
     color: var(--error);
 }
 
+/* Burger button - hidden on desktop */
+.header-burger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--header-muted);
+    cursor: pointer;
+    transition: color var(--transition);
+    outline: none;
+}
+
+.header-burger:hover {
+    color: var(--header-text);
+}
+
 .header-left {
     display: flex;
     align-items: center;
@@ -247,6 +271,129 @@ body {
 .header-back:hover {
     background: rgba(19, 19, 28, 0.06);
     color: var(--text-primary);
+}
+
+/* === Mobile Drawer === */
+.mobile-drawer-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 250ms ease, visibility 250ms ease;
+}
+
+.mobile-drawer-overlay.is-open {
+    opacity: 1;
+    visibility: visible;
+}
+
+.mobile-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 85vw;
+    background: var(--bg-primary);
+    z-index: 1000;
+    transform: translateX(100%);
+    transition: transform 300ms ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.mobile-drawer.is-open {
+    transform: translateX(0);
+}
+
+.mobile-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.mobile-drawer-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.mobile-drawer-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--transition);
+    outline: none;
+}
+
+.mobile-drawer-close:hover {
+    color: var(--text-primary);
+}
+
+.mobile-drawer-nav {
+    flex: 1;
+    padding: 12px 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.mobile-drawer-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px 24px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 400;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+    outline: none;
+}
+
+.mobile-drawer-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.mobile-drawer-btn.is-active {
+    color: var(--text-primary);
+    font-weight: 500;
+    background: var(--bg-tertiary);
+}
+
+.mobile-drawer-footer {
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+}
+
+.mobile-drawer-btn--logout {
+    color: var(--text-muted);
+}
+
+.mobile-drawer-btn--logout:hover {
+    color: var(--error);
+    background: var(--error-dim);
 }
 
 /* === History Panel (fixed bottom center, opens upward) === */
@@ -460,6 +607,11 @@ body {
     margin-bottom: 48px;
 }
 
+/* Back link for mobile - hidden on desktop */
+.back-link-mobile {
+    display: none;
+}
+
 .hero-section h1 {
     font-size: 52px;
     font-weight: 400;
@@ -491,6 +643,7 @@ body {
     text-decoration: none;
     border-radius: 6px;
     transition: background var(--transition);
+    white-space: nowrap;
 }
 
 .hero-reports-link:hover {
@@ -1836,27 +1989,68 @@ body {
 /* === Responsive === */
 @media (max-width: 768px) {
 
-    /* Header */
+    /* Header — burger menu */
     .header-inner {
-        padding: 0 20px;
+        padding: 0 16px;
     }
 
-    .header-nav-btn {
-        padding: 6px 10px;
-        font-size: 12px;
+    .header-logo {
+        height: 18px;
     }
 
-    .header-btn {
-        min-width: 44px;
-        min-height: 44px;
-        justify-content: center;
-        padding: 0 10px;
+    .header-nav {
+        display: none;
+    }
+
+    .header-btn--logout {
+        display: none !important;
+    }
+
+    .header-burger {
+        display: flex;
+    }
+
+    .header-right {
+        margin-left: auto;
     }
 
     .header-back {
-        min-width: 44px;
-        min-height: 44px;
-        padding: 0 8px;
+        display: none !important;
+    }
+
+    /* Back link mobile - visible on mobile */
+    .back-link-mobile {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 0;
+        margin-bottom: 16px;
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        font-family: inherit;
+        font-size: 13px;
+        cursor: pointer;
+        transition: color var(--transition);
+        outline: none;
+    }
+
+    .back-link-mobile:hover {
+        color: var(--text-primary);
+    }
+
+    /* Hero actions — horizontal scroll on small screens */
+    .hero-actions {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0 -16px;
+        padding: 0 16px;
+    }
+
+    .hero-reports-link,
+    .hero-icon-btn {
+        flex-shrink: 0;
     }
 
     /* Settings page */
@@ -2013,7 +2207,11 @@ body {
 
     /* Header */
     .header-inner {
-        padding: 0 16px;
+        padding: 0 12px;
+    }
+
+    .header-logo {
+        height: 16px;
     }
 
     /* Hero */
@@ -2080,12 +2278,6 @@ body {
 
     .settings-page-header h1 {
         font-size: 24px;
-    }
-
-    /* Header nav — hide text labels on very small screens */
-    .header-nav-btn {
-        padding: 6px 8px;
-        font-size: 11px;
     }
 }
 

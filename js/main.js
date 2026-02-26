@@ -54,7 +54,9 @@ function showHeader(visible) {
 
 function updateHeader(isProjectView) {
     const btnBack = document.getElementById('btnBack');
+    const btnBackMobile = document.getElementById('btnBackMobile');
     if (btnBack) btnBack.style.display = isProjectView ? '' : 'none';
+    if (btnBackMobile) btnBackMobile.style.display = isProjectView ? '' : 'none';
 }
 
 function updateHeaderForUser(user) {
@@ -66,12 +68,28 @@ function updateHeaderForUser(user) {
     if (btnNavUsers) btnNavUsers.style.display = isAdmin ? '' : 'none';
     if (btnNavSettings) btnNavSettings.style.display = isAdmin ? '' : 'none';
     if (btnLogout) btnLogout.style.display = '';
+
+    // Sync mobile drawer buttons
+    const btnDrawerUsers = document.getElementById('btnDrawerUsers');
+    const btnDrawerSettings = document.getElementById('btnDrawerSettings');
+    const btnDrawerLogout = document.getElementById('btnDrawerLogout');
+
+    if (btnDrawerUsers) btnDrawerUsers.style.display = isAdmin ? '' : 'none';
+    if (btnDrawerSettings) btnDrawerSettings.style.display = isAdmin ? '' : 'none';
+    if (btnDrawerLogout) btnDrawerLogout.style.display = '';
 }
 
 function setActiveNav(btnId) {
+    // Update header nav
     document.querySelectorAll('.header-nav-btn').forEach(b => b.classList.remove('is-active'));
     const btn = document.getElementById(btnId);
     if (btn) btn.classList.add('is-active');
+
+    // Update mobile drawer nav
+    document.querySelectorAll('.mobile-drawer-btn').forEach(b => b.classList.remove('is-active'));
+    const drawerBtnId = btnId.replace('btnNav', 'btnDrawer');
+    const drawerBtn = document.getElementById(drawerBtnId);
+    if (drawerBtn) drawerBtn.classList.add('is-active');
 }
 
 async function loadProjectsView() {
