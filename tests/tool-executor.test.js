@@ -3,8 +3,8 @@
  * Tests the _buildResponse and _formatTextForYonote helpers, plus extractSectionFromText integration.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ToolExecutor } from '../js/tool-executor.js';
-import { EventBus } from '../js/event-bus.js';
+import { ToolExecutor } from '../src/tool-executor.js';
+import { EventBus } from '../src/event-bus.js';
 
 // Helper: create a mock YonoteClient
 function mockYonote() {

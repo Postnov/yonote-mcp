@@ -2,7 +2,7 @@
  * Tests for ai-agent.js — port of AI agent tests from test_yonote_client.py
  */
 import { describe, it, expect, vi } from 'vitest';
-import { AIAgent } from '../js/ai-agent.js';
+import { AIAgent } from '../src/ai-agent.js';
 
 describe('AIAgent', () => {
     it('initializes correctly', () => {
@@ -137,9 +137,9 @@ describe('AIAgent', () => {
 
         // Check that the API was called with limited history (slice(-10))
         const fetchCall = global.fetch.mock.calls[0];
-        const proxyBody = JSON.parse(fetchCall[1].body);
-        // Messages are inside the proxy envelope: body.body.messages
-        const messagesCount = proxyBody.body.messages.length;
+        const requestBody = JSON.parse(fetchCall[1].body);
+        // Direct mode: messages are at top level
+        const messagesCount = requestBody.messages.length;
         // System prompt (1) + last 10 history items + 1 new user = 12
         expect(messagesCount).toBeLessThanOrEqual(12);
 

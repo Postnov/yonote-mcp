@@ -1,16 +1,21 @@
-# Auto Claude data directory
-.auto-claude/
-
 # Dependencies
 node_modules/
-venv/
-
-# SQLite database
-data/app.db
 
 # Environment
 .env
 
-# Python cache
-__pycache__/
-.pytest_cache/
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test cache
+coverage/
+
+# Package lock (optional, remove if you want to include it)
+# package-lock.json

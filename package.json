@@ -1,12 +1,45 @@
 {
   "name": "yonote-mcp",
-  "version": "2.0.0",
-  "description": "AI-assistant for Yonote document management",
+  "version": "3.0.0",
+  "description": "AI-powered JavaScript client for Yonote knowledge base management",
   "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/yonote-client.js",
+    "./agent": "./src/ai-agent.js",
+    "./tools": "./src/tool-executor.js",
+    "./markdown": "./src/markdown-processor.js",
+    "./events": "./src/event-bus.js"
+  },
+  "files": [
+    "src/",
+    "proxy/",
+    "README.md"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "keywords": [
+    "yonote",
+    "mcp",
+    "ai",
+    "deepseek",
+    "knowledge-base",
+    "document-management",
+    "markdown"
+  ],
+  "author": "Postnov",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Postnov/yonote-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Postnov/yonote-mcp/issues"
+  },
+  "homepage": "https://github.com/Postnov/yonote-mcp#readme",
   "devDependencies": {
     "jsdom": "^28.1.0",
     "vitest": "^3.0.0"

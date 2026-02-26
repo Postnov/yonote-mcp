@@ -1,17 +1,32 @@
 /**
- * Yonote API client — port of yonote_client.py.
- * All requests go through the PHP proxy to avoid CORS issues.
+ * Yonote API client.
+ * Supports both browser (via proxy) and Node.js (direct requests) modes.
  */
 export class YonoteClient {
-    constructor(apiToken, baseUrl = 'https://app.yonote.ru/api') {
+    /**
+     * @param {string} apiToken - Yonote API token
+     * @param {string} baseUrl - Yonote API base URL (default: https://app.yonote.ru/api)
+     * @param {string|null} proxyUrl - URL of CORS proxy for browser mode (null for Node.js direct requests)
+     */
+    constructor(apiToken, baseUrl = 'https://app.yonote.ru/api', proxyUrl = null) {
         this.apiToken = apiToken;
         this.baseUrl = baseUrl.replace(/\/+$/, '');
+        this.proxyUrl = proxyUrl;
         this._workspaceUrl = null;
     }
 
     async _post(endpoint, data = {}) {
         const url = `${this.baseUrl}/${endpoint}`;
-        const resp = await fetch('api/proxy.php', {
+
+        if (this.proxyUrl) {
+            return this._postViaProxy(url, data);
+        } else {
+            return this._postDirect(url, data);
+        }
+    }
+
+    async _postViaProxy(url, data) {
+        const resp = await fetch(this.proxyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -24,6 +39,23 @@ export class YonoteClient {
                 },
                 body: data,
             }),
+        });
+        if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(`API error ${resp.status}: ${text}`);
+        }
+        return resp.json();
+    }
+
+    async _postDirect(url, data) {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.apiToken}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+            },
+            body: JSON.stringify(data),
         });
         if (!resp.ok) {
             const text = await resp.text();
@@ -49,7 +81,6 @@ export class YonoteClient {
     fullUrl(relativeUrl) {
         if (!relativeUrl) return '';
         if (relativeUrl.startsWith('http')) return relativeUrl;
-        // Use cached workspace URL (must call getWorkspaceUrl first)
         return `${this._workspaceUrl || ''}${relativeUrl}`;
     }
 
@@ -152,11 +183,9 @@ export class YonoteClient {
     // --- Export ---
 
     async documentExportMarkdown(documentId, timeout = 30000) {
-        // Step 1: Start export
         const result = await this._post('documents.export', { id: documentId });
         const foId = result.data.fileOperation.id;
 
-        // Step 2: Poll until complete
         const deadline = Date.now() + timeout;
         while (Date.now() < deadline) {
             await new Promise(r => setTimeout(r, 500));
@@ -169,37 +198,48 @@ export class YonoteClient {
             throw new Error(`Export not completed within ${timeout}ms`);
         }
 
-        // Step 3: Get redirect URL (noRedirect mode)
-        const redirectResp = await fetch('api/proxy.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                url: `${this.baseUrl}/fileOperations.redirect`,
+        if (this.proxyUrl) {
+            const redirectResp = await fetch(this.proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: `${this.baseUrl}/fileOperations.redirect`,
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.apiToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: { id: foId },
+                    noRedirect: true,
+                }),
+            });
+            const redirectData = await redirectResp.json();
+            const redirectUrl = redirectData.location;
+            if (!redirectUrl) throw new Error('No redirect URL from export');
+
+            const downloadResp = await fetch(this.proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: redirectUrl,
+                    method: 'GET',
+                    headers: {},
+                }),
+            });
+            const downloadData = await downloadResp.json();
+            return downloadData._rawText || '';
+        } else {
+            const redirectResp = await fetch(`${this.baseUrl}/fileOperations.redirect`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${this.apiToken}`,
                     'Content-Type': 'application/json',
                 },
-                body: { id: foId },
-                noRedirect: true,
-            }),
-        });
-        const redirectData = await redirectResp.json();
-        const redirectUrl = redirectData.location;
-        if (!redirectUrl) throw new Error('No redirect URL from export');
-
-        // Step 4: Download content
-        const downloadResp = await fetch('api/proxy.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                url: redirectUrl,
-                method: 'GET',
-                headers: {},
-            }),
-        });
-        const downloadData = await downloadResp.json();
-        return downloadData._rawText || '';
+                body: JSON.stringify({ id: foId }),
+                redirect: 'follow',
+            });
+            return await redirectResp.text();
+        }
     }
 
     // --- Attachments ---

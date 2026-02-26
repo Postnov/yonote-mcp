@@ -1,27 +1,35 @@
 /**
- * Tool executor — port of app.py agentic loop and all tool handlers.
- * Runs entirely in the browser, dispatches events via EventBus.
+ * Tool executor — runs AI agent tools against Yonote API.
+ * Dispatches events via EventBus.
  */
 
 import { parseMarkdownBlocks, blocksToYonoteMarkdown, extractSectionFromText } from './markdown-processor.js';
 import { translateTextViaAPI, translateHeading } from './ai-agent.js';
 
 export class ToolExecutor {
-    constructor(yonote, agent, eventBus, config) {
+    /**
+     * @param {YonoteClient} yonote - Yonote API client
+     * @param {AIAgent} agent - AI agent
+     * @param {EventBus} eventBus - Event emitter
+     * @param {Object|null} config - Optional config object with page IDs
+     */
+    constructor(yonote, agent, eventBus, config = null) {
         this.yonote = yonote;
         this.agent = agent;
         this.eventBus = eventBus;
-        this.config = config;
+        this.config = config || {};
         this.pendingActions = null;
         this._resolvedIds = new Map();
     }
 
-    /**
-     * Resolve a document slug/URL-ID to its canonical UUID.
-     * Yonote's documents.list requires UUID for parentDocumentId,
-     * but settings may contain slug-format IDs (e.g. "avgodom-EmozI4aR08").
-     * Caches results to avoid repeated API calls.
-     */
+    _getConfig(key) {
+        if (!this.config) return '';
+        if (typeof this.config.get === 'function') {
+            return this.config.get(key) || '';
+        }
+        return this.config[key] || '';
+    }
+
     async _resolveDocumentId(idOrSlug) {
         if (!idOrSlug) return null;
         if (this._resolvedIds.has(idOrSlug)) return this._resolvedIds.get(idOrSlug);
@@ -64,7 +72,6 @@ export class ToolExecutor {
                     return;
                 }
 
-                // Execute actions
                 const allResults = [];
                 const readTools = ['search', 'list_collections', 'list_documents', 'document_info', 'list_drafts', 'list_viewed', 'deep_search'];
                 const hasOnlyReadActions = actions.every(a => readTools.includes(a.tool));
@@ -76,13 +83,12 @@ export class ToolExecutor {
 
                 finalResults.push(...allResults);
 
-                // Feed results back to AI
                 const resultsJson = JSON.stringify(allResults);
                 this.agent.addContext('user', `Результаты выполнения: ${resultsJson}`);
 
                 if (hasOnlyReadActions) {
                     this.eventBus.emit('status', { message: 'Анализирую результаты...' });
-                    plan = await this.agent.processMessage('Продолжай на основе полученных результатов. Если задача поиска — ответь пользователю что нашлось (или не нашлось). НЕ предлагай создавать новые страницы, если пользователь просил только найти информацию.');
+                    plan = await this.agent.processMessage('Продолжай на основе полученных результатов.');
                     continue;
                 }
 
@@ -92,7 +98,6 @@ export class ToolExecutor {
                 return;
             }
 
-            // Max iterations
             this.eventBus.emit('result', { message: 'Готово!' });
             this.eventBus.emit('done', {});
         } catch (e) {
@@ -149,7 +154,7 @@ export class ToolExecutor {
         }
     }
 
-    // --- Non-streaming tools ---
+    // --- Standard tools ---
 
     async _executeTool(tool, params) {
         const yonote = this.yonote;
@@ -194,7 +199,7 @@ export class ToolExecutor {
             }
 
             if (!docsList.length && documents.length) {
-                return { documents: [], count: 0, note: `Поиск по «${query}» вернул ${documents.length} результатов, но все оказались пустыми страницами.` };
+                return { documents: [], count: 0, note: `Поиск по «${query}» вернул ${documents.length} результатов, но все оказались пустыми.` };
             }
             return { documents: docsList, count: docsList.length };
         }
@@ -338,7 +343,7 @@ export class ToolExecutor {
         return { error: `Неизвестный инструмент: ${tool}` };
     }
 
-    // --- Streaming tools ---
+    // --- Complex tools ---
 
     async _executeTranslate(params) {
         const docId = params.document_id;
@@ -371,9 +376,9 @@ export class ToolExecutor {
 
             const newBlock = { ...block };
             if (block.type === 'heading') {
-                newBlock.content = await translateHeading(block.content, targetLang, this.agent.apiKey);
+                newBlock.content = await translateHeading(block.content, targetLang, this.agent.apiKey, this.agent.model, this.agent.proxyUrl);
             } else {
-                newBlock.content = await translateTextViaAPI(block.content, targetLang, this.agent.apiKey);
+                newBlock.content = await translateTextViaAPI(block.content, targetLang, this.agent.apiKey, this.agent.model, this.agent.proxyUrl);
             }
             translatedBlocks.push(newBlock);
         }
@@ -414,11 +419,10 @@ export class ToolExecutor {
         if (!text.trim()) {
             return {
                 tool: 'copy_section',
-                result: { message: `Документ «${sourceTitle}» не содержит текста (возможно, контент в блочном формате).` },
+                result: { message: `Документ «${sourceTitle}» не содержит текста.` },
             };
         }
 
-        // Try rich export first
         this.eventBus.emit('status', { message: 'Экспортирую полный контент...' });
         let richText = null;
         try { richText = await this.yonote.documentExportMarkdown(docId); } catch {}
@@ -448,11 +452,9 @@ export class ToolExecutor {
         this.eventBus.emit('status', { message: `Создаю страницу «${outputTitle}»...` });
         let colId = params.collection_id;
 
-        // Use reports_page_id from settings as parent when no explicit parent is given
-        const reportsPageId = this.config ? this.config.get('reports_page_id') : '';
+        const reportsPageId = this._getConfig('reports_page_id');
         let parentForOutput = params.parent_document_id || reportsPageId || null;
         if (parentForOutput) {
-            // Resolve parent ID and get its collectionId to avoid 403
             try {
                 const parentDoc = await this.yonote.documentInfo(parentForOutput);
                 const parentData = parentDoc.data || {};
@@ -487,7 +489,6 @@ export class ToolExecutor {
 
     async _executeExtractSections(params) {
         const parentDocId = params.parent_document_id;
-        // Support both single heading and multiple headings
         const headings = params.headings || (params.heading ? [params.heading] : []);
         const isMulti = headings.length > 1;
         const outputTitle = params.output_title || `Отчет: ${headings.map(h => this._capitalizeFirst(h)).join(', ')}`;
@@ -499,7 +500,6 @@ export class ToolExecutor {
 
         this.eventBus.emit('status', { message: 'Загружаю дочерние страницы...' });
 
-        // Resolve slug ID to UUID (documents.list requires UUID)
         let resolvedParentId = parentDocId;
         let rootTitle = null;
         try {
@@ -518,9 +518,8 @@ export class ToolExecutor {
             return { tool: 'extract_sections', result: { message: 'Дочерних страниц не найдено' } };
         }
 
-        this.eventBus.emit('status', { message: `Найдено ${total} страниц на всех уровнях вложенности` });
+        this.eventBus.emit('status', { message: `Найдено ${total} страниц` });
 
-        // Track results per heading
         const foundByHeading = {};
         for (const h of headings) foundByHeading[h] = [];
 
@@ -545,7 +544,6 @@ export class ToolExecutor {
                     continue;
                 }
 
-                // Check which headings have sections in quick text
                 const quickMatches = {};
                 for (const h of headings) {
                     const section = extractSectionFromText(text, h);
@@ -557,7 +555,6 @@ export class ToolExecutor {
                     continue;
                 }
 
-                // Try rich export once if any heading matched
                 let richText = null;
                 try { richText = await this.yonote.documentExportMarkdown(pageId); } catch {}
 
@@ -583,43 +580,21 @@ export class ToolExecutor {
             }
         }
 
-        // Report skipped pages
-        if (errorPages.length) {
-            this.eventBus.emit('status', { message: `Ошибки при чтении: ${errorPages.slice(0, 5).join('; ')}` });
-        }
-        if (emptyTextPages.length) {
-            this.eventBus.emit('status', { message: `⚠️ Пустой текст (блочный формат?): ${emptyTextPages.slice(0, 10).join(', ')}` });
-        }
-        for (const h of headings) {
-            if (!foundByHeading[h].length) {
-                this.eventBus.emit('status', { message: `Секция «${h}» не найдена ни в одном документе` });
-            }
-        }
-
         const totalFound = Object.values(foundByHeading).reduce((sum, arr) => sum + arr.length, 0);
 
         if (totalFound === 0) {
             const headingsStr = headings.map(h => `«${h}»`).join(', ');
-            const detailParts = [];
-            if (emptyTextPages.length) detailParts.push(`${emptyTextPages.length} с пустым текстом`);
-            if (pagesWithNoMatch) detailParts.push(`${pagesWithNoMatch} без совпадений`);
-            if (errorPages.length) detailParts.push(`${errorPages.length} с ошибками`);
-            const detail = detailParts.join('; ');
             return {
                 tool: 'extract_sections',
-                result: {
-                    message: `Секции ${headingsStr} не найдены ни в одном из ${total} документов${detail ? ` (${detail})` : ''}`,
-                },
+                result: { message: `Секции ${headingsStr} не найдены ни в одном из ${total} документов` },
             };
         }
 
         this.eventBus.emit('status', { message: `Найдено ${totalFound} секций. Собираю отчёт...` });
 
-        // Compile report
         const compiledParts = [];
 
         if (isMulti) {
-            // Multi-heading: group by page, then by heading
             const pageMap = new Map();
             for (const h of headings) {
                 for (const section of (foundByHeading[h] || [])) {
@@ -633,9 +608,7 @@ export class ToolExecutor {
             let firstPage = true;
             for (const [, page] of pageMap) {
                 if (!firstPage) {
-                    compiledParts.push('');
-                    compiledParts.push('---');
-                    compiledParts.push('');
+                    compiledParts.push('', '---', '');
                 }
                 firstPage = false;
 
@@ -653,7 +626,6 @@ export class ToolExecutor {
                 }
             }
         } else {
-            // Single heading: flat structure (backward compatible)
             const sections = foundByHeading[headings[0]] || [];
             for (const section of sections) {
                 compiledParts.push(`## ${section.page_title}`);
@@ -662,8 +634,7 @@ export class ToolExecutor {
                 }
                 compiledParts.push('');
                 compiledParts.push(section.content);
-                compiledParts.push('');
-                compiledParts.push('');
+                compiledParts.push('', '');
             }
         }
 
@@ -672,11 +643,9 @@ export class ToolExecutor {
         this.eventBus.emit('status', { message: `Создаю страницу «${outputTitle}»...` });
         let colId = params.collection_id;
 
-        // Use reports_page_id from settings as parent for report documents
-        const reportsPageId = this.config ? this.config.get('reports_page_id') : '';
+        const reportsPageId = this._getConfig('reports_page_id');
         let outputParentId = params.parent_output_document_id || reportsPageId || null;
         if (outputParentId) {
-            // Resolve parent ID and get its collectionId to avoid 403
             try {
                 const parentDoc = await this.yonote.documentInfo(outputParentId);
                 const parentData = parentDoc.data || {};
@@ -702,9 +671,6 @@ export class ToolExecutor {
                 document: { id: newDoc.id, title: newDoc.title, url: this.yonote.fullUrl(newDoc.url || '') },
                 sections_found: totalFound,
                 total_children: total,
-                headings_found: Object.fromEntries(
-                    headings.map(h => [h, foundByHeading[h].length])
-                ),
             },
         };
     }
@@ -712,22 +678,16 @@ export class ToolExecutor {
     async _executeDeepSearch(params) {
         const query = (params.query || '').trim();
         const collectionId = params.collection_id;
-        // Support parent_document_id: from params or from settings
-        const parentDocumentId = params.parent_document_id
-            || (this.config ? this.config.get('default_search_page_id') : '')
-            || '';
+        const parentDocumentId = params.parent_document_id || this._getConfig('default_search_page_id') || '';
 
         if (!query) {
             return { tool: 'deep_search', result: { documents: [], count: 0, message: 'Пустой запрос' } };
         }
 
         const queryLower = query.toLowerCase();
-
         const found = [];
         const seenIds = new Set();
         let totalScanned = 0;
-        const allPages = [];
-        const allPagesIds = new Set();
 
         const makeSnippet = (text, qLower, qLen) => {
             const idx = text.toLowerCase().indexOf(qLower);
@@ -755,33 +715,8 @@ export class ToolExecutor {
             }
         };
 
-        const collectPage = (docId, docTitle, docUrl) => {
-            if (docId && !allPagesIds.has(docId)) {
-                allPagesIds.add(docId);
-                allPages.push({ id: docId, title: docTitle, url: docUrl });
-            }
-        };
-
-        const scanChildrenRecursive = async (parentId, depth = 0) => {
-            if (depth > 5) return;
-            let children;
-            try {
-                const result = await this.yonote.documentsList(null, parentId, 100);
-                children = result.data || [];
-            } catch { return; }
-
-            for (const child of children) {
-                collectPage(child.id, child.title || '', child.url || '');
-                checkDocument(child.id, child.title || '', child.url || '', child.text || '');
-                await scanChildrenRecursive(child.id, depth + 1);
-            }
-        };
-
-        // --- Scoped search: parent_document_id (from params or default_search_page_id) ---
         if (parentDocumentId && !collectionId) {
             this.eventBus.emit('status', { message: 'Загружаю дочерние страницы...' });
-
-            // Resolve slug ID to UUID (documents.list requires UUID)
             const resolvedParentId = await this._resolveDocumentId(parentDocumentId);
             const allDescendants = await this._fetchAllDescendants(resolvedParentId);
             const total = allDescendants.length;
@@ -798,130 +733,39 @@ export class ToolExecutor {
                     this.eventBus.emit('status', { message: `Сканирую (${i + 1}/${total})...` });
                 }
 
-                collectPage(page.id, page.title, '');
-
                 try {
                     const docResult = await this.yonote.documentInfo(page.id);
                     const doc = docResult.data || {};
-                    const text = doc.text || '';
-                    const docUrl = doc.url || '';
-                    checkDocument(page.id, page.title, docUrl, text);
+                    checkDocument(page.id, page.title, doc.url || '', doc.text || '');
                 } catch {
-                    // Try export as fallback
                     try {
                         const richText = await this.yonote.documentExportMarkdown(page.id);
                         if (richText) checkDocument(page.id, page.title, '', richText);
                     } catch {}
                 }
             }
-
-            this.eventBus.emit('status', {
-                message: `Скан завершён: ${totalScanned} страниц, найдено ${found.length}`,
-            });
-        }
-        // --- Global search: all collections ---
-        else {
+        } else {
+            this.eventBus.emit('status', { message: 'Загружаю коллекции...' });
             let collections;
-            let discoveryDocs = [];
+            try {
+                const colsResult = await this.yonote.collectionsList(100);
+                collections = collectionId ? [{ id: collectionId }] : (colsResult.data || []);
+            } catch (e) {
+                return { tool: 'deep_search', result: { documents: [], count: 0, message: `Ошибка: ${e.message}` } };
+            }
 
-            if (collectionId) {
-                collections = [{ id: collectionId, name: '' }];
-            } else {
-                this.eventBus.emit('status', { message: 'Загружаю коллекции...' });
+            for (const col of collections) {
+                this.eventBus.emit('status', { message: `Сканирую коллекцию...` });
                 try {
-                    const colsResult = await this.yonote.collectionsList(100);
-                    collections = colsResult.data || [];
-                } catch (e) {
-                    return { tool: 'deep_search', result: { documents: [], count: 0, message: `Ошибка: ${e.message}` } };
-                }
-
-                // Discover hidden collections
-                const knownColIds = new Set(collections.map(c => c.id));
-                try {
-                    const discResult = await this.yonote.documentsList(null, null, 100);
-                    discoveryDocs = discResult.data || [];
-                    for (const doc of discoveryDocs) {
-                        const docColId = doc.collectionId;
-                        if (docColId && !knownColIds.has(docColId)) {
-                            knownColIds.add(docColId);
-                            collections.push({ id: docColId, name: '(личное)' });
-                        }
+                    const result = await this.yonote.documentsList(col.id, null, 100);
+                    const docs = result.data || [];
+                    for (const doc of docs) {
+                        checkDocument(doc.id, doc.title || '', doc.url || '', doc.text || '');
                     }
                 } catch {}
             }
+        }
 
-            // Pre-scan discovery docs
-            for (const doc of discoveryDocs) {
-                collectPage(doc.id, doc.title || '', doc.url || '');
-                checkDocument(doc.id, doc.title || '', doc.url || '', doc.text || '');
-            }
-
-            // Phase 1: Scan collections
-            for (const col of collections) {
-                const colName = col.name || '';
-                this.eventBus.emit('status', {
-                    message: colName ? `Сканирую «${colName}»...` : 'Сканирую документы...',
-                });
-
-                let docs;
-                try {
-                    const result = await this.yonote.documentsList(col.id, null, 100);
-                    docs = result.data || [];
-                } catch { continue; }
-
-                for (const doc of docs) {
-                    collectPage(doc.id, doc.title || '', doc.url || '');
-                    checkDocument(doc.id, doc.title || '', doc.url || '', doc.text || '');
-                    if (!found.length) {
-                        await scanChildrenRecursive(doc.id);
-                    }
-                }
-            }
-
-            this.eventBus.emit('status', {
-                message: `Быстрый скан: ${totalScanned} страниц, найдено ${found.length}`,
-            });
-
-            // Phase 2: Export if nothing found
-            if (!found.length) {
-                const pagesToExport = allPages.filter(p => !seenIds.has(p.id));
-                const totalExport = pagesToExport.length;
-
-                if (totalExport > 0) {
-                    this.eventBus.emit('status', { message: `Глубокий поиск: экспорт ${totalExport} страниц...` });
-
-                    for (let idx = 0; idx < pagesToExport.length; idx++) {
-                        const page = pagesToExport[idx];
-                        if (seenIds.has(page.id)) continue;
-
-                        if ((idx + 1) % 5 === 0 || idx === 0) {
-                            this.eventBus.emit('status', { message: `Экспорт (${idx + 1}/${totalExport})...` });
-                        }
-
-                        let richText;
-                        try { richText = await this.yonote.documentExportMarkdown(page.id); } catch { continue; }
-                        if (richText) {
-                            totalScanned++;
-                            if (richText.toLowerCase().includes(queryLower)) {
-                                seenIds.add(page.id);
-                                found.push({
-                                    id: page.id,
-                                    title: page.title,
-                                    url: page.url ? this.yonote.fullUrl(page.url) : '',
-                                    snippet: makeSnippet(richText, queryLower, query.length),
-                                });
-                            }
-                        }
-                    }
-                }
-
-                this.eventBus.emit('status', {
-                    message: `Глубокий поиск завершён: ${totalScanned} страниц, найдено ${found.length}`,
-                });
-            }
-        } // end else (global search)
-
-        // Number results
         found.forEach((doc, i) => { doc.number = i + 1; });
 
         const result = { documents: found, count: found.length };
@@ -973,49 +817,16 @@ export class ToolExecutor {
             if (!redirectUrl) continue;
 
             if (heading) {
-                const matchResult = this._matchImageToHeading(name, heading);
-                if (matchResult !== 'match') continue;
+                const nameLower = name.replace(/\.\w+$/, '').toLowerCase();
+                const headingLower = heading.toLowerCase().trim();
+                const pattern = new RegExp('^#?' + this._escapeRegex(headingLower) + '(?:\\s*[-—]|\\s+|$)', 'i');
+                if (!pattern.test(nameLower)) continue;
             }
 
             const fullUrl = this.yonote.fullUrl(redirectUrl);
-            let displayName = name;
-            if (heading) {
-                let clean = name.replace(/\.\w+$/, '').trim();
-                if (clean.startsWith('#')) clean = clean.slice(1);
-                const headingLower = heading.toLowerCase().trim();
-                const stripped = clean.replace(
-                    new RegExp('^' + this._escapeRegex(headingLower) + '\\s*[-—]\\s*', 'i'), ''
-                ).trim();
-                if (stripped && stripped !== clean) {
-                    const extMatch = name.match(/\.\w+$/);
-                    const ext = extMatch ? extMatch[0] : '';
-                    displayName = stripped + ext;
-                } else if (clean.toLowerCase() === headingLower) {
-                    displayName = name;
-                }
-            }
-            images.push(`![${displayName}](${fullUrl})`);
+            images.push(`![${name}](${fullUrl})`);
         }
         return images;
-    }
-
-    _matchImageToHeading(name, heading) {
-        if (!name || !heading) return 'untagged';
-        const headingLower = heading.toLowerCase().trim();
-        let nameClean = name.replace(/\.\w+$/, '').trim();
-        let nameLower = nameClean.toLowerCase();
-        if (nameLower.startsWith('#')) {
-            nameLower = nameLower.slice(1);
-            nameClean = nameClean.slice(1);
-        }
-
-        const pattern = new RegExp('^' + this._escapeRegex(headingLower) + '(?:\\s*[-—]\\s*|\\s+|$)', 'i');
-        if (pattern.test(nameLower)) return 'match';
-
-        const tagPattern = /^[\w]+(?:\s*[-—]\s*|\s+)/u;
-        if (tagPattern.test(nameLower) && nameLower.split(/\s/)[0].length < 30) return 'mismatch';
-
-        return 'untagged';
     }
 
     _capitalizeFirst(str) {
@@ -1112,8 +923,6 @@ export class ToolExecutor {
             }
         }
 
-        // When template is generic "Готово!" and no document was created,
-        // propagate tool-specific messages (errors, warnings) instead of hiding them
         if (message === 'Готово!' && !hasAnyDocument && !allDocuments.length) {
             const toolMessages = allResults
                 .map(item => (item.result || {}).message)

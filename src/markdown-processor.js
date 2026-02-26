@@ -1,30 +1,27 @@
 /**
- * Markdown block parser and translator — port of markdown_processor.py.
- *
- * Splits markdown into typed blocks and translates only text content
- * while preserving structure programmatically.
+ * Markdown block parser and translator.
+ * Splits markdown into typed blocks for translation while preserving structure.
  */
 
-// Patterns that indicate a line is code (not natural language)
 const CODE_PATTERNS = [
-    /^\s*\/\*/,              // /* comment start
-    /^\s*\*\//,              // */ comment end
-    /^\s*\*\s/,              // * inside block comment
-    /^\s*\/\//,              // // comment
+    /^\s*\/\*/,
+    /^\s*\*\//,
+    /^\s*\*\s/,
+    /^\s*\/\//,
     /^\s*(const|let|var|function|class|import|export|return|if|else|for|while|switch|case)\b/,
-    /^\s*\}/,                // closing brace
-    /.*=>\s*\{/,             // arrow function
-    /.*\{\s*$/,              // line ending with {
-    /^\s*[\w.]+\(/,          // function call
-    /^\s*\$\(/,              // jQuery
-    /^\s*window\./,          // window.
-    /^\s*document\./,        // document.
-    /.*;\s*$/,               // line ending with semicolon
-    /^\s*├──\s/,             // tree diagram
-    /^\s*└──\s/,             // tree diagram
-    /^[a-z][a-z0-9]*(-[a-z0-9]+)+$/,  // CSS class names
-    /^\s*[A-Z][A-Z_0-9]+\s*[:=]/,     // UPPER_CASE key:value
-    /^\s*[A-Z][A-Z_0-9]+\s*[—–]/,     // UPPER_CASE label with dash
+    /^\s*\}/,
+    /.*=>\s*\{/,
+    /.*\{\s*$/,
+    /^\s*[\w.]+\(/,
+    /^\s*\$\(/,
+    /^\s*window\./,
+    /^\s*document\./,
+    /.*;\s*$/,
+    /^\s*├──\s/,
+    /^\s*└──\s/,
+    /^[a-z][a-z0-9]*(-[a-z0-9]+)+$/,
+    /^\s*[A-Z][A-Z_0-9]+\s*[:=]/,
+    /^\s*[A-Z][A-Z_0-9]+\s*[—–]/,
 ];
 
 const URL_ONLY_PATTERN = /^\s*https?:\/\/\S+\s*$/;
@@ -35,7 +32,6 @@ export function isCodeLine(line) {
     for (const pattern of CODE_PATTERNS) {
         if (pattern.test(line)) return true;
     }
-    // Line is mostly special characters (code-like)
     if (stripped.length > 3) {
         let alphaCount = 0;
         for (const c of stripped) {
@@ -61,14 +57,12 @@ export function parseMarkdownBlocks(text) {
     while (i < lines.length) {
         const line = lines[i];
 
-        // Empty line
         if (line.trim() === '') {
             blocks.push({ type: 'empty', content: '', translatable: false });
             i++;
             continue;
         }
 
-        // Fenced code block
         const codeMatch = line.match(/^(`{3,}|~{3,})(.*)/);
         if (codeMatch) {
             const fenceChar = codeMatch[1][0];
@@ -88,28 +82,24 @@ export function parseMarkdownBlocks(text) {
             continue;
         }
 
-        // Image line
         if (/^!\[/.test(line.trim())) {
             blocks.push({ type: 'image', content: line, translatable: false });
             i++;
             continue;
         }
 
-        // Heading
         if (/^#{1,6}\s/.test(line)) {
             blocks.push({ type: 'heading', content: line, translatable: true });
             i++;
             continue;
         }
 
-        // Horizontal rule
         if (/^(\*{3,}|-{3,}|_{3,})\s*$/.test(line.trim())) {
             blocks.push({ type: 'horizontal_rule', content: line, translatable: false });
             i++;
             continue;
         }
 
-        // Heuristic: unfenced code block
         if (isCodeLine(line)) {
             const codeLines = [line];
             i++;
@@ -157,14 +147,12 @@ export function parseMarkdownBlocks(text) {
             continue;
         }
 
-        // URL-only line
         if (isUrlOnly(line)) {
             blocks.push({ type: 'url', content: line, translatable: false });
             i++;
             continue;
         }
 
-        // Regular line
         blocks.push({ type: 'line', content: line, translatable: true });
         i++;
     }
@@ -225,8 +213,6 @@ export function blocksToYonoteMarkdown(blocks) {
     return parts.join('\n\n');
 }
 
-// --- Section extraction (from app.py) ---
-
 function stripMarkdownFormatting(text) {
     text = text.replace(/\*{1,3}(.*?)\*{1,3}/g, '$1');
     text = text.replace(/_{1,3}(.*?)_{1,3}/g, '$1');
@@ -256,7 +242,6 @@ export function extractSectionFromText(text, headingName) {
     const lines = text.split('\n');
     const headingLower = headingName.toLowerCase().trim();
 
-    // --- Path A: strict heuristic ---
     const headingsA = [];
     for (let i = 0; i < lines.length; i++) {
         const stripped = lines[i].trim();
@@ -277,7 +262,6 @@ export function extractSectionFromText(text, headingName) {
         }
     }
 
-    // Look for target in Path A
     let targetIdx = null;
     let targetIsMarkdown = false;
     let nextHeadingIdx = null;
@@ -306,7 +290,6 @@ export function extractSectionFromText(text, headingName) {
         return sectionText || null;
     }
 
-    // --- Path B: plain text headings without surrounding empty lines ---
     targetIdx = null;
     for (let i = 0; i < lines.length; i++) {
         const stripped = lines[i].trim();

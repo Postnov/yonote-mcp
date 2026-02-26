@@ -1,8 +1,8 @@
 <?php
 /**
- * CORS proxy — forwards requests to Yonote API and DeepSeek API via cURL.
+ * CORS proxy for Yonote API and DeepSeek API.
  *
- * POST /api/proxy.php
+ * POST /proxy/proxy.php
  * Body: { "url": "https://...", "method": "POST", "headers": {...}, "body": {...}, "noRedirect": false }
  */
 
@@ -21,10 +21,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
-
-require_once __DIR__ . '/db.php';
-require_once __DIR__ . '/auth_middleware.php';
-requireAuth();
 
 $input = json_decode(file_get_contents('php://input'), true);
 if (!$input || !isset($input['url'])) {
@@ -48,7 +44,8 @@ foreach ($allowedDomains as $domain) {
         break;
     }
 }
-// Also allow downloading from S3/storage URLs returned by export redirects
+
+// Also allow downloading from S3/storage URLs (for export)
 $exportDomains = ['storage.yandexcloud.net', 's3.amazonaws.com', '.storage.googleapis.com'];
 foreach ($exportDomains as $domain) {
     if (strpos(parse_url($targetUrl, PHP_URL_HOST), $domain) !== false) {
@@ -102,7 +99,6 @@ if ($error) {
 }
 
 if ($noRedirect && ($httpCode >= 300 && $httpCode < 400)) {
-    // Extract Location header from response
     $headerSize = strpos($response, "\r\n\r\n");
     $headerStr = substr($response, 0, $headerSize);
     $location = '';
@@ -116,8 +112,6 @@ if ($noRedirect && ($httpCode >= 300 && $httpCode < 400)) {
     exit;
 }
 
-// Return raw response — it's already JSON from Yonote/DeepSeek APIs
-// For non-JSON responses (like export downloads), wrap in data field
 http_response_code($httpCode);
 $decoded = json_decode($response, true);
 if ($decoded !== null) {

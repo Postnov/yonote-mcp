@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>yonote-mcp Browser Example</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 { color: #333; }
+        .section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        textarea { resize: vertical; min-height: 80px; }
+        button {
+            background: #0066cc;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        button:hover { background: #0052a3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        button.confirm { background: #28a745; }
+        button.confirm:hover { background: #218838; }
+        #status {
+            padding: 10px;
+            background: #e8f4fd;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            display: none;
+        }
+        #status.visible { display: block; }
+        #output {
+            font-family: monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .log-status { color: #569cd6; }
+        .log-result { color: #4ec9b0; }
+        .log-error { color: #f14c4c; }
+        .log-confirm { color: #dcdcaa; }
+    </style>
+</head>
+<body>
+    <h1>yonote-mcp Browser Example</h1>
+
+    <div class="section">
+        <h3>Configuration</h3>
+        <label for="yonoteToken">Yonote API Token</label>
+        <input type="password" id="yonoteToken" placeholder="Enter your Yonote API token">
+
+        <label for="deepseekKey">DeepSeek API Key</label>
+        <input type="password" id="deepseekKey" placeholder="Enter your DeepSeek API key">
+
+        <label for="proxyUrl">Proxy URL</label>
+        <input type="text" id="proxyUrl" value="/proxy/proxy.php" placeholder="Path to CORS proxy">
+    </div>
+
+    <div class="section">
+        <h3>Command</h3>
+        <label for="command">Enter your command</label>
+        <textarea id="command" placeholder="e.g., Show all collections, Find documents about marketing, Create a page called 'Notes'"></textarea>
+
+        <button id="sendBtn">Send Command</button>
+        <button id="confirmBtn" class="confirm" style="display:none;">Confirm Action</button>
+    </div>
+
+    <div class="section">
+        <h3>Output</h3>
+        <div id="status"></div>
+        <div id="output">Ready. Enter your credentials and a command above.</div>
+    </div>
+
+    <script type="module">
+        import { createYonoteAgent } from '../src/index.js';
+
+        let executor = null;
+        let eventBus = null;
+
+        const statusEl = document.getElementById('status');
+        const outputEl = document.getElementById('output');
+        const sendBtn = document.getElementById('sendBtn');
+        const confirmBtn = document.getElementById('confirmBtn');
+
+        function log(text, className = '') {
+            const span = document.createElement('span');
+            span.className = className;
+            span.textContent = text + '\n';
+            outputEl.appendChild(span);
+            outputEl.scrollTop = outputEl.scrollHeight;
+        }
+
+        function setStatus(message) {
+            statusEl.textContent = message;
+            statusEl.classList.toggle('visible', !!message);
+        }
+
+        function initialize() {
+            const yonoteToken = document.getElementById('yonoteToken').value.trim();
+            const deepseekKey = document.getElementById('deepseekKey').value.trim();
+            const proxyUrl = document.getElementById('proxyUrl').value.trim();
+
+            if (!yonoteToken || !deepseekKey) {
+                alert('Please enter both Yonote token and DeepSeek key');
+                return false;
+            }
+
+            const { executor: exec, eventBus: bus } = createYonoteAgent({
+                yonoteToken,
+                deepseekKey,
+                proxyUrl,
+            });
+
+            executor = exec;
+            eventBus = bus;
+
+            eventBus.on('status', ({ message }) => {
+                setStatus(message);
+                log(`[STATUS] ${message}`, 'log-status');
+            });
+
+            eventBus.on('result', (data) => {
+                log(`[RESULT] ${JSON.stringify(data, null, 2)}`, 'log-result');
+            });
+
+            eventBus.on('confirm', ({ message, pending_actions }) => {
+                log(`[CONFIRM] ${message}`, 'log-confirm');
+                log(`Pending: ${JSON.stringify(pending_actions, null, 2)}`, 'log-confirm');
+                confirmBtn.style.display = 'inline-block';
+            });
+
+            eventBus.on('error', ({ message }) => {
+                log(`[ERROR] ${message}`, 'log-error');
+            });
+
+            eventBus.on('done', () => {
+                setStatus('');
+                sendBtn.disabled = false;
+            });
+
+            return true;
+        }
+
+        sendBtn.addEventListener('click', async () => {
+            const command = document.getElementById('command').value.trim();
+            if (!command) {
+                alert('Please enter a command');
+                return;
+            }
+
+            if (!executor && !initialize()) return;
+
+            outputEl.innerHTML = '';
+            confirmBtn.style.display = 'none';
+            sendBtn.disabled = true;
+
+            log(`> ${command}\n`);
+            await executor.processUserMessage(command);
+        });
+
+        confirmBtn.addEventListener('click', async () => {
+            if (!executor) return;
+
+            confirmBtn.style.display = 'none';
+            sendBtn.disabled = true;
+
+            log('\n[EXECUTING CONFIRMED ACTIONS]\n');
+            await executor.executeConfirmedActions();
+        });
+    </script>
+</body>
+</html>

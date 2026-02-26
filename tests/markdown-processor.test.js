@@ -7,7 +7,7 @@ import {
     parseMarkdownBlocks, blocksToMarkdown,
     blocksToYonoteMarkdown, isHeadingCandidate,
     extractSectionFromText,
-} from '../js/markdown-processor.js';
+} from '../src/markdown-processor.js';
 
 // Real Yonote document snippet for testing
 const YONOTE_SAMPLE = `Как переносить боковую панель в другие тренинги и уроки

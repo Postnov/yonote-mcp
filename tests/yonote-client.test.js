@@ -2,7 +2,7 @@
  * Tests for yonote-client.js — port of test_yonote_client.py
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { YonoteClient } from '../js/yonote-client.js';
+import { YonoteClient } from '../src/yonote-client.js';
 
 // Helper to create a mock fetch that returns proxy responses
 function mockFetch(data, status = 200) {
