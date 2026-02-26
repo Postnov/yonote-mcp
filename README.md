@@ -1,27 +1,27 @@
 # yonote-mcp
 
-AI-powered JavaScript client for Yonote knowledge base management. Uses DeepSeek AI for natural language document operations.
+JavaScript-библиотека для управления базой знаний Yonote с помощью ИИ. Использует DeepSeek для обработки команд на естественном языке.
 
-## Features
+## Возможности
 
-- **Full Yonote API coverage** — documents, collections, search, export
-- **AI-powered commands** — natural language interface via DeepSeek
-- **19 built-in tools** — search, create, update, translate, extract sections
-- **Markdown processing** — intelligent parsing and translation
-- **Dual-mode** — works in Node.js (direct) and Browser (via CORS proxy)
+- **Полный доступ к Yonote API** — документы, коллекции, поиск, экспорт
+- **ИИ-команды** — интерфейс на естественном языке через DeepSeek
+- **19 встроенных инструментов** — поиск, создание, обновление, перевод, извлечение секций
+- **Обработка Markdown** — интеллектуальный парсинг и перевод
+- **Два режима работы** — Node.js (прямые запросы) и Браузер (через CORS-прокси)
 
-## Installation
+## Установка
 
 ```bash
-# Clone the repository
+# Клонировать репозиторий
 git clone https://github.com/Postnov/yonote-mcp.git
 cd yonote-mcp
 
-# Install dev dependencies (for tests)
+# Установить dev-зависимости (для тестов)
 npm install
 ```
 
-## Quick Start
+## Быстрый старт
 
 ### Node.js
 
@@ -33,25 +33,25 @@ const { executor, eventBus } = createYonoteAgent({
     deepseekKey: process.env.DEEPSEEK_KEY,
 });
 
-// Listen to events
-eventBus.on('status', ({ message }) => console.log('Status:', message));
-eventBus.on('result', (data) => console.log('Result:', data));
-eventBus.on('error', ({ message }) => console.error('Error:', message));
+// Подписка на события
+eventBus.on('status', ({ message }) => console.log('Статус:', message));
+eventBus.on('result', (data) => console.log('Результат:', data));
+eventBus.on('error', ({ message }) => console.error('Ошибка:', message));
 
-// Execute command
-await executor.processUserMessage('Find documents about marketing');
+// Выполнение команды
+await executor.processUserMessage('Найди документы про маркетинг');
 ```
 
-### Browser (requires CORS proxy)
+### Браузер (требуется CORS-прокси)
 
 ```html
 <script type="module">
 import { createYonoteAgent } from './src/index.js';
 
 const { executor, eventBus } = createYonoteAgent({
-    yonoteToken: 'YOUR_YONOTE_TOKEN',
-    deepseekKey: 'YOUR_DEEPSEEK_KEY',
-    proxyUrl: '/proxy/proxy.php',  // CORS proxy
+    yonoteToken: 'ВАШ_YONOTE_TOKEN',
+    deepseekKey: 'ВАШ_DEEPSEEK_KEY',
+    proxyUrl: '/proxy/proxy.php',  // CORS-прокси
 });
 
 eventBus.on('status', ({ message }) => {
@@ -59,58 +59,58 @@ eventBus.on('status', ({ message }) => {
 });
 
 eventBus.on('result', (data) => {
-    console.log('Result:', data);
+    console.log('Результат:', data);
 });
 
-executor.processUserMessage('List all collections');
+executor.processUserMessage('Покажи все коллекции');
 </script>
 ```
 
-## Configuration
+## Конфигурация
 
-### Environment Variables
+### Переменные окружения
 
-Create a `.env` file:
+Создайте файл `.env`:
 
 ```
-YONOTE_TOKEN=your_yonote_api_token
-DEEPSEEK_KEY=your_deepseek_api_key
+YONOTE_TOKEN=ваш_токен_yonote
+DEEPSEEK_KEY=ваш_ключ_deepseek
 ```
 
-### Optional Config
+### Дополнительные настройки
 
 ```javascript
 const { executor } = createYonoteAgent({
     yonoteToken: '...',
     deepseekKey: '...',
-    yonoteBaseUrl: 'https://your-instance.yonote.ru/api',  // Custom Yonote URL
-    proxyUrl: '/proxy/proxy.php',  // For browser mode
+    yonoteBaseUrl: 'https://your-instance.yonote.ru/api',  // Свой URL Yonote
+    proxyUrl: '/proxy/proxy.php',  // Для браузера
     config: {
-        default_search_page_id: 'page-id',  // Limit search to this page
-        reports_page_id: 'page-id',         // Save reports here
-        tags_page_id: 'page-id',            // Tags page
+        default_search_page_id: 'page-id',  // Ограничить поиск этой страницей
+        reports_page_id: 'page-id',         // Сохранять отчёты сюда
+        tags_page_id: 'page-id',            // Страница с тегами
     },
 });
 ```
 
-## API Reference
+## Справочник API
 
 ### YonoteClient
 
-Direct Yonote API client.
+Клиент для прямого доступа к API Yonote.
 
 ```javascript
 import { YonoteClient } from './src/yonote-client.js';
 
 const client = new YonoteClient(token, baseUrl, proxyUrl);
 
-// Collections
+// Коллекции
 await client.collectionsList();
 await client.collectionInfo(collectionId);
 await client.collectionCreate(name, description);
 await client.collectionDelete(collectionId);
 
-// Documents
+// Документы
 await client.documentsList(collectionId, parentDocumentId);
 await client.documentInfo(documentId);
 await client.documentsSearch(query, collectionId);
@@ -123,76 +123,76 @@ await client.documentArchive(documentId);
 await client.documentRestore(documentId);
 await client.documentExportMarkdown(documentId);
 
-// Attachments
+// Вложения
 await client.attachmentsList(documentId);
 ```
 
 ### AIAgent
 
-DeepSeek-powered AI for processing commands.
+ИИ на базе DeepSeek для обработки команд.
 
 ```javascript
 import { AIAgent } from './src/ai-agent.js';
 
 const agent = new AIAgent(apiKey, model, config, proxyUrl);
-const plan = await agent.processMessage('Find documents about X');
-// Returns: { thinking, actions, pending_actions, response_template }
+const plan = await agent.processMessage('Найди документы про X');
+// Возвращает: { thinking, actions, pending_actions, response_template }
 ```
 
 ### ToolExecutor
 
-Executes AI-planned actions against Yonote.
+Выполняет запланированные ИИ действия в Yonote.
 
 ```javascript
 import { ToolExecutor } from './src/tool-executor.js';
 
 const executor = new ToolExecutor(yonoteClient, agent, eventBus, config);
-await executor.processUserMessage('Create a page called "Notes"');
-await executor.executeConfirmedActions();  // After user confirmation
+await executor.processUserMessage('Создай страницу "Заметки"');
+await executor.executeConfirmedActions();  // После подтверждения пользователем
 ```
 
-## Available Tools
+## Доступные инструменты
 
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | `search(query)` | Search documents by text |
-| 2 | `list_collections()` | List all collections |
-| 3 | `list_documents(collection_id?, parent_document_id?)` | List documents |
-| 4 | `document_info(document_id)` | Get full document content |
-| 5 | `create_document(title, text, collection_id?)` | Create new document |
-| 6 | `update_document(document_id, title?, text?, append?)` | Update document |
-| 7 | `delete_document(document_id)` | Delete document |
-| 8 | `move_document(document_id, collection_id?, parent_document_id?)` | Move document |
-| 9 | `archive_document(document_id)` | Archive document |
-| 10 | `restore_document(document_id)` | Restore from archive |
-| 11 | `list_drafts()` | List draft documents |
-| 12 | `list_viewed()` | List recently viewed |
-| 13 | `create_collection(name, description?)` | Create collection |
-| 14 | `delete_collection(collection_id)` | Delete collection |
-| 15 | `translate_document(document_id, target_language, new_title?)` | Translate document |
-| 16 | `extract_sections(parent_document_id, heading, output_title?, breadcrumbs?)` | Extract sections recursively |
-| 17 | `duplicate_document(document_id, title?, publish?, recursive?)` | Duplicate document |
-| 18 | `copy_section(document_id, heading, output_title?)` | Copy section to new page |
-| 19 | `deep_search(query, collection_id?, parent_document_id?)` | Deep content search |
+| # | Инструмент | Описание |
+|---|------------|----------|
+| 1 | `search(query)` | Поиск документов по тексту |
+| 2 | `list_collections()` | Список всех коллекций |
+| 3 | `list_documents(collection_id?, parent_document_id?)` | Список документов |
+| 4 | `document_info(document_id)` | Получить содержимое документа |
+| 5 | `create_document(title, text, collection_id?)` | Создать документ |
+| 6 | `update_document(document_id, title?, text?, append?)` | Обновить документ |
+| 7 | `delete_document(document_id)` | Удалить документ |
+| 8 | `move_document(document_id, collection_id?, parent_document_id?)` | Переместить документ |
+| 9 | `archive_document(document_id)` | Архивировать документ |
+| 10 | `restore_document(document_id)` | Восстановить из архива |
+| 11 | `list_drafts()` | Список черновиков |
+| 12 | `list_viewed()` | Недавно просмотренные |
+| 13 | `create_collection(name, description?)` | Создать коллекцию |
+| 14 | `delete_collection(collection_id)` | Удалить коллекцию |
+| 15 | `translate_document(document_id, target_language, new_title?)` | Перевести документ |
+| 16 | `extract_sections(parent_document_id, heading, output_title?, breadcrumbs?)` | Извлечь секции рекурсивно |
+| 17 | `duplicate_document(document_id, title?, publish?, recursive?)` | Дублировать документ |
+| 18 | `copy_section(document_id, heading, output_title?)` | Скопировать секцию в новую страницу |
+| 19 | `deep_search(query, collection_id?, parent_document_id?)` | Глубокий поиск по содержимому |
 
-## Events
+## События
 
-The EventBus emits these events:
+EventBus генерирует следующие события:
 
-| Event | Data | Description |
-|-------|------|-------------|
-| `status` | `{ message }` | Progress updates |
-| `result` | `{ message, documents?, collections?, document? }` | Operation results |
-| `confirm` | `{ message, pending_actions }` | Needs user confirmation |
-| `error` | `{ message }` | Error occurred |
-| `done` | `{}` | Operation completed |
+| Событие | Данные | Описание |
+|---------|--------|----------|
+| `status` | `{ message }` | Обновления прогресса |
+| `result` | `{ message, documents?, collections?, document? }` | Результаты операции |
+| `confirm` | `{ message, pending_actions }` | Требуется подтверждение |
+| `error` | `{ message }` | Произошла ошибка |
+| `done` | `{}` | Операция завершена |
 
-## CORS Proxy Setup
+## Настройка CORS-прокси
 
-For browser usage, deploy `proxy/proxy.php` to your PHP server:
+Для работы в браузере разместите `proxy/proxy.php` на PHP-сервере:
 
 ```bash
-# Your server structure
+# Структура сервера
 /var/www/html/
 ├── proxy/
 │   └── proxy.php
@@ -200,44 +200,44 @@ For browser usage, deploy `proxy/proxy.php` to your PHP server:
     └── index.html
 ```
 
-The proxy whitelists:
-- `*.yonote.ru` — Yonote API
+Прокси разрешает запросы к:
+- `*.yonote.ru` — API Yonote
 - `api.deepseek.com` — DeepSeek AI
-- `storage.yandexcloud.net`, `s3.amazonaws.com` — Export downloads
+- `storage.yandexcloud.net`, `s3.amazonaws.com` — Скачивание экспорта
 
-## Running Tests
+## Запуск тестов
 
 ```bash
-npm test           # Run tests once
-npm run test:watch # Watch mode
+npm test           # Запустить тесты один раз
+npm run test:watch # Режим наблюдения
 ```
 
-## Project Structure
+## Структура проекта
 
 ```
 yonote-mcp/
 ├── src/
-│   ├── index.js              # Main exports + createYonoteAgent()
-│   ├── yonote-client.js      # Yonote API client
-│   ├── ai-agent.js           # DeepSeek AI integration
-│   ├── tool-executor.js      # Tool execution engine
-│   ├── markdown-processor.js # Markdown parsing
+│   ├── index.js              # Главный экспорт + createYonoteAgent()
+│   ├── yonote-client.js      # Клиент Yonote API
+│   ├── ai-agent.js           # Интеграция DeepSeek AI
+│   ├── tool-executor.js      # Движок выполнения инструментов
+│   ├── markdown-processor.js # Парсинг Markdown
 │   └── event-bus.js          # Event emitter
 ├── proxy/
-│   └── proxy.php             # CORS proxy for browsers
+│   └── proxy.php             # CORS-прокси для браузеров
 ├── examples/
-│   ├── node-example.js       # Node.js usage
-│   └── browser-example.html  # Browser usage
-├── tests/                    # Vitest tests
-├── .env.example              # Environment template
+│   ├── node-example.js       # Пример для Node.js
+│   └── browser-example.html  # Пример для браузера
+├── tests/                    # Тесты Vitest
+├── .env.example              # Шаблон переменных окружения
 ├── package.json
 └── README.md
 ```
 
-## License
+## Лицензия
 
 MIT
 
-## Credits
+## Благодарности
 
-Based on [yonote-mcp](https://github.com/cutalion/yonote-mcp) unofficial MCP server.
+Основано на [yonote-mcp](https://github.com/cutalion/yonote-mcp) — неофициальном MCP-сервере.
